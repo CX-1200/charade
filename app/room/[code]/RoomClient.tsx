@@ -1,22 +1,25 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, formatClock, post, session } from '@/lib/client';
+import { api, formatClock, formatSpan, post, session } from '@/lib/client';
 import { DURATION_PRESETS, MAX_DURATION, MIN_DURATION, teamColor } from '@/lib/ui';
 import type { RoomView } from '@/lib/serialize';
 import type { Bank } from '@/lib/types';
 
 type ViewResponse = RoomView & { playerId?: string | null };
+type Act = (body: Record<string, unknown>) => Promise<ViewResponse | null>;
 
 const POLL_PLAYING = 900;
 const POLL_IDLE = 1600;
 
 export default function RoomClient({ code }: { code: string }) {
-  const [playerId, setPlayerId] = useState<string | null>(null);
+  const router = useRouter();
   const [view, setView] = useState<RoomView | null>(null);
   const [bank, setBank] = useState<Bank | null>(null);
   const [error, setError] = useState('');
+  const [closed, setClosed] = useState(false);
   const [joinName, setJoinName] = useState('');
   const [needsJoin, setNeedsJoin] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -25,10 +28,7 @@ export default function RoomClient({ code }: { code: string }) {
 
   /* ------------------------------------------------------------ bootstrap */
 
-  useEffect(() => {
-    setPlayerId(session.getPlayerId(code));
-    setJoinName(session.getName());
-  }, [code]);
+  useEffect(() => setJoinName(session.getName()), []);
 
   const applyView = useCallback((data: RoomView) => {
     offsetRef.current = data.now - Date.now();
@@ -39,13 +39,21 @@ export default function RoomClient({ code }: { code: string }) {
   const refresh = useCallback(async () => {
     try {
       const pid = session.getPlayerId(code);
-      const data = await api<RoomView>(
-        `/api/rooms/${code}${pid ? `?playerId=${encodeURIComponent(pid)}` : ''}`,
-      );
+      const token = session.getAdminToken();
+      const query = new URLSearchParams();
+      if (pid) query.set('playerId', pid);
+      if (token) query.set('adminToken', token);
+      const data = await api<RoomView>(`/api/rooms/${code}?${query}`);
       applyView(data);
       setError('');
     } catch (e) {
-      setError((e as Error).message);
+      const err = e as Error & { status?: number };
+      // 404/410 mean the room is gone: expired, or the last player left.
+      if (err.status === 404 || err.status === 410) {
+        session.clearPlayerId(code);
+        setClosed(true);
+      }
+      setError(err.message);
     }
   }, [code, applyView]);
 
@@ -58,10 +66,11 @@ export default function RoomClient({ code }: { code: string }) {
 
   // Poll the room; faster while a round is running.
   useEffect(() => {
+    if (closed) return;
     const delay = view?.room.state === 'playing' ? POLL_PLAYING : POLL_IDLE;
     const timer = setInterval(() => void refresh(), delay);
     return () => clearInterval(timer);
-  }, [refresh, view?.room.state]);
+  }, [refresh, view?.room.state, closed]);
 
   // Local clock so the countdown stays smooth between polls.
   useEffect(() => {
@@ -72,23 +81,26 @@ export default function RoomClient({ code }: { code: string }) {
 
   /* --------------------------------------------------------------- actions */
 
-  const act = useCallback(
-    async (body: Record<string, unknown>) => {
+  const act = useCallback<Act>(
+    async (body) => {
       setBusy(true);
       try {
         const data = await post<ViewResponse>(`/api/rooms/${code}`, {
           ...body,
           playerId: session.getPlayerId(code),
+          adminToken: session.getAdminToken(),
         });
-        if (data.playerId) {
-          session.setPlayerId(code, data.playerId);
-          setPlayerId(data.playerId);
-        }
+        if (data.playerId) session.setPlayerId(code, data.playerId);
         applyView(data);
         setError('');
         return data;
       } catch (e) {
-        setError((e as Error).message);
+        const err = e as Error & { status?: number };
+        if (err.status === 410) {
+          session.clearPlayerId(code);
+          setClosed(true);
+        }
+        setError(err.message);
         return null;
       } finally {
         setBusy(false);
@@ -104,11 +116,26 @@ export default function RoomClient({ code }: { code: string }) {
     await act({ action: 'join', name });
   }
 
+  /** Leaving takes you out of the room entirely, back to the home page. */
+  const leave = useCallback(async () => {
+    setBusy(true);
+    try {
+      await post(`/api/rooms/${code}`, {
+        action: 'leave',
+        playerId: session.getPlayerId(code),
+        adminToken: session.getAdminToken(),
+      }).catch(() => undefined);
+    } finally {
+      session.clearPlayerId(code);
+      router.push('/');
+    }
+  }, [code, router]);
+
   /* ---------------------------------------------------------------- derived */
 
   const room = view?.room;
   const you = view?.you ?? null;
-  const isHost = !!you?.isHost;
+  const admin = !!view?.admin;
 
   const remainingMs = useMemo(() => {
     if (!room?.endsAt || room.state !== 'playing') return 0;
@@ -121,6 +148,23 @@ export default function RoomClient({ code }: { code: string }) {
   }, [timeUp, refresh]);
 
   /* ----------------------------------------------------------------- render */
+
+  if (closed) {
+    return (
+      <main className="shell">
+        <Header code={code} />
+        <div className="card">
+          <h1>This room is closed</h1>
+          <p className="sub">
+            Rooms shut down three hours after they open, or as soon as the last player leaves.
+          </p>
+          <Link className="btn primary" href="/">
+            ← Back home
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   if (!room) {
     return (
@@ -156,7 +200,7 @@ export default function RoomClient({ code }: { code: string }) {
             />
           </label>
           <button className="btn primary block" onClick={join} disabled={busy}>
-            Enter lobby
+            Enter room
           </button>
         </div>
       </main>
@@ -165,35 +209,40 @@ export default function RoomClient({ code }: { code: string }) {
 
   return (
     <main className="shell">
-      <Header code={code} you={you.name} team={you.team} color={teamColor(room.teams, you.team)} />
+      <Header
+        code={code}
+        you={you.name}
+        team={you.team}
+        color={you.team ? teamColor(room.teams, you.team) : undefined}
+        admin={admin}
+        onLeave={leave}
+      />
       {error && <div className="err">{error}</div>}
 
-      {room.state === 'lobby' && (
-        <Lobby
-          view={view}
-          bank={bank}
-          isHost={isHost}
-          busy={busy}
-          act={act}
-          code={code}
-          onLeave={() => {
-            session.clearPlayerId(code);
-            void act({ action: 'leave' });
-            setPlayerId(null);
-            setNeedsJoin(true);
-          }}
-        />
+      {!you.team ? (
+        <TeamGate view={view} busy={busy} act={act} />
+      ) : (
+        <>
+          {room.state === 'lobby' && (
+            <Lobby
+              view={view}
+              bank={bank}
+              busy={busy}
+              act={act}
+              code={code}
+              admin={admin}
+            />
+          )}
+          {room.state === 'playing' && (
+            <Play view={view} remainingMs={remainingMs} busy={busy} act={act} admin={admin} />
+          )}
+          {room.state === 'finished' && <Dashboard view={view} admin={admin} busy={busy} act={act} />}
+        </>
       )}
-
-      {room.state === 'playing' && (
-        <Play view={view} remainingMs={remainingMs} busy={busy} act={act} isHost={isHost} />
-      )}
-
-      {room.state === 'finished' && <Dashboard view={view} isHost={isHost} busy={busy} act={act} />}
 
       <p className="muted" style={{ marginTop: 20, textAlign: 'center' }}>
-        {playerId ? 'Signed in · ' : ''}Room {code} · <Link href="/questions">Prompt bank</Link> ·{' '}
-        <Link href="/">Home</Link>
+        Room {code} · closes in {formatSpan(room.closesInMs)} ·{' '}
+        <Link href="/questions">Question Bank</Link> · <Link href="/">Home</Link>
       </p>
     </main>
   );
@@ -206,11 +255,15 @@ function Header({
   you,
   team,
   color,
+  admin,
+  onLeave,
 }: {
   code: string;
   you?: string;
   team?: string;
   color?: string;
+  admin?: boolean;
+  onLeave?: () => void;
 }) {
   return (
     <div className="topbar">
@@ -218,12 +271,85 @@ function Header({
         <span className="logo">🎭</span> Room <span className="code-pill">{code}</span>
       </div>
       {you && (
-        <div className="player-pill">
-          <span className="status" />
-          {you}
-          <span style={{ color, fontWeight: 700 }}>· {team}</span>
+        <div className="row tight">
+          {admin && <span className="chip on">🔓 Admin</span>}
+          <div className="player-pill">
+            <span className="status" />
+            {you}
+            {team && <span style={{ color, fontWeight: 700 }}>· {team}</span>}
+          </div>
+          {/* Always reachable — lobby, mid-round and on the dashboard alike. */}
+          {onLeave && (
+            <button className="btn sm ghost" onClick={onLeave}>
+              Leave game
+            </button>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Nobody plays without a team — this is the first thing a new arrival sees. */
+function TeamGate({ view, busy, act }: { view: RoomView; busy: boolean; act: Act }) {
+  const { room } = view;
+  const [name, setName] = useState('');
+  const first = room.teams.length === 0;
+
+  const create = () => {
+    if (!name.trim()) return;
+    void act({ action: 'createTeam', team: name.trim() }).then((ok) => ok && setName(''));
+  };
+
+  return (
+    <div className="card">
+      <h1>{first ? 'Create the first team' : 'Pick your team'}</h1>
+      <p className="sub">
+        {first
+          ? 'This room has no teams yet. Name one and you will be put straight into it.'
+          : 'Join one of the teams below, or start a new one of your own.'}
+      </p>
+
+      {!first && (
+        <div className="section">
+          <h3>Join an existing team</h3>
+          <div className="row">
+            {room.teams.map((team) => {
+              const size = room.players.filter((p) => p.team === team).length;
+              return (
+                <button
+                  key={team}
+                  className="chip"
+                  disabled={busy}
+                  onClick={() => act({ action: 'joinTeam', team })}
+                >
+                  <i className="dot" style={{ background: teamColor(room.teams, team) }} />
+                  {team}
+                  <span className="muted">{size}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="section">
+        <h3>{first ? 'Team name' : 'Or create a new team'}</h3>
+        <div className="row" style={{ flexWrap: 'nowrap' }}>
+          <input
+            type="text"
+            value={name}
+            maxLength={16}
+            autoFocus
+            placeholder="e.g. Red Team"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && create()}
+          />
+          <button className="btn primary" onClick={create} disabled={busy || !name.trim()}>
+            Create &amp; join
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -250,30 +376,30 @@ function Scoreboard({
         {scores.map((row, index) => {
           const lead = index === 0 && row.score > 0;
           return (
-          <div key={row.team} className={`board-row${lead ? ' lead' : ''}`}>
-            <div className="rank">{medals[index] ?? index + 1}</div>
-            <div>
-              <div className="team-name">
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    // On the red leader row a red dot would disappear.
-                    background: lead ? 'var(--cream)' : teamColor(teams, row.team),
-                  }}
-                />
-                {row.team}
+            <div key={row.team} className={`board-row${lead ? ' lead' : ''}`}>
+              <div className="rank">{medals[index] ?? index + 1}</div>
+              <div>
+                <div className="team-name">
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      // On the red leader row a red dot would disappear.
+                      background: lead ? 'var(--cream)' : teamColor(teams, row.team),
+                    }}
+                  />
+                  {row.team}
+                </div>
+                <div className="roster">{row.players.join(', ') || 'No members yet'}</div>
               </div>
-              <div className="roster">{row.players.join(', ') || 'No members yet'}</div>
+              <div className="pts">
+                <b>{row.score}</b>
+                <small>
+                  ✓ {row.correct} · ⏭ {row.skipped}
+                </small>
+              </div>
             </div>
-            <div className="pts">
-              <b>{row.score}</b>
-              <small>
-                ✓ {row.correct} · ⏭ {row.skipped}
-              </small>
-            </div>
-          </div>
           );
         })}
         {!scores.length && <div className="empty">No scores yet.</div>}
@@ -285,42 +411,23 @@ function Scoreboard({
 function Lobby({
   view,
   bank,
-  isHost,
   busy,
   act,
   code,
-  onLeave,
+  admin,
 }: {
   view: RoomView;
   bank: Bank | null;
-  isHost: boolean;
   busy: boolean;
-  act: (body: Record<string, unknown>) => Promise<unknown>;
+  act: Act;
   code: string;
-  onLeave: () => void;
+  admin: boolean;
 }) {
   const { room } = view;
-  const [duration, setDuration] = useState(room.settings.durationSec);
-  const [newTeam, setNewTeam] = useState('');
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => setDuration(room.settings.durationSec), [room.settings.durationSec]);
-
-  const selected = room.settings.categoryIds;
-  const selectedCount = useMemo(() => {
-    if (!bank) return 0;
-    const pool = selected.length
-      ? bank.categories.filter((c) => selected.includes(c.id))
-      : bank.categories;
-    return pool.reduce((sum, c) => sum + c.items.length, 0);
-  }, [bank, selected]);
-
-  function toggleCategory(id: string) {
-    if (!bank) return;
-    const current = selected.length ? selected : bank.categories.map((c) => c.id);
-    const next = current.includes(id) ? current.filter((c) => c !== id) : [...current, id];
-    void act({ action: 'settings', categoryIds: next.length === bank.categories.length ? [] : next });
-  }
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState(view.you?.name ?? '');
+  const [newTeam, setNewTeam] = useState('');
 
   async function copyInvite() {
     const url = `${window.location.origin}/room/${code}`;
@@ -333,219 +440,143 @@ function Lobby({
     }
   }
 
+  const createTeam = () => {
+    if (!newTeam.trim()) return;
+    void act({ action: 'createTeam', team: newTeam.trim() }).then((ok) => ok && setNewTeam(''));
+  };
+
   return (
     <>
       <div className="card">
-        <div className="spread" style={{ marginBottom: 14 }}>
+        <div className="spread" style={{ marginBottom: 16 }}>
           <div>
             <h2 style={{ margin: 0 }}>
               Lobby · {room.players.length} {room.players.length === 1 ? 'player' : 'players'}
             </h2>
             <p className="muted">Share the room code or link and everyone lands in this game.</p>
           </div>
-          <div className="row tight">
-            <button className="btn sm" onClick={copyInvite}>
-              {copied ? '✓ Copied' : '🔗 Copy invite link'}
-            </button>
-            <button className="btn sm ghost" onClick={onLeave}>
-              Leave
+          <button className="btn sm" onClick={copyInvite}>
+            {copied ? '✓ Copied' : '🔗 Copy invite link'}
+          </button>
+        </div>
+
+        <div className="section">
+          <div className="section-head">
+            <h3>You</h3>
+            <button className="btn sm ghost" onClick={() => setRenaming((v) => !v)}>
+              {renaming ? 'Cancel' : 'Change name'}
             </button>
           </div>
-        </div>
-
-        <h3>Pick your team</h3>
-        <div className="row" style={{ marginBottom: 16 }}>
-          {room.teams.map((team) => (
-            <button
-              key={team}
-              className={`chip${view.you?.team === team ? ' on' : ''}`}
-              onClick={() => act({ action: 'setTeam', team })}
-              disabled={busy}
-            >
-              <i
-                className="dot"
-                style={{
-                  background:
-                    view.you?.team === team ? 'currentColor' : teamColor(room.teams, team),
-                }}
-              />
-              {team}
-            </button>
-          ))}
-        </div>
-
-        <h3>Players</h3>
-        <div className="row">
-          {room.players.map((player) => (
-            <div key={player.id} className="player-pill">
-              <span className={`status${player.online ? '' : ' off'}`} />
-              {player.name}
-              {player.isHost && ' 👑'}
-              <span style={{ color: teamColor(room.teams, player.team), fontSize: 12 }}>
-                {player.team}
-              </span>
-              {isHost && !player.isHost && (
-                <button
-                  className="btn sm ghost"
-                  title="Remove player"
-                  style={{ padding: '2px 6px' }}
-                  onClick={() => act({ action: 'kick', targetId: player.id })}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {isHost ? (
-        <div className="card">
-          <h2>Host settings</h2>
-
-          <label className="field">
-            <span>Countdown: {duration} seconds</span>
-            <input
-              type="range"
-              min={MIN_DURATION}
-              max={300}
-              step={5}
-              value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
-              onMouseUp={() => act({ action: 'settings', durationSec: duration })}
-              onTouchEnd={() => act({ action: 'settings', durationSec: duration })}
-            />
-          </label>
-          <div className="row" style={{ marginBottom: 16 }}>
-            {DURATION_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                className={`chip${room.settings.durationSec === preset ? ' on' : ''}`}
-                onClick={() => act({ action: 'settings', durationSec: preset })}
-              >
-                {preset}s
-              </button>
-            ))}
-            <span className="chip" style={{ cursor: 'default', gap: 8 }}>
-              Custom
+          {renaming ? (
+            <div className="row" style={{ flexWrap: 'nowrap' }}>
               <input
-                type="number"
-                min={MIN_DURATION}
-                max={MAX_DURATION}
-                value={duration}
-                style={{ width: 72, padding: '4px 8px', borderRadius: 8 }}
-                onChange={(e) => setDuration(Number(e.target.value))}
-                onBlur={() => act({ action: 'settings', durationSec: duration })}
+                type="text"
+                value={newName}
+                maxLength={20}
+                autoFocus
+                onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) =>
-                  e.key === 'Enter' && act({ action: 'settings', durationSec: duration })
+                  e.key === 'Enter' &&
+                  act({ action: 'rename', name: newName }).then((ok) => ok && setRenaming(false))
                 }
               />
-              s
-            </span>
-          </div>
+              <button
+                className="btn primary"
+                disabled={busy || !newName.trim()}
+                onClick={() =>
+                  act({ action: 'rename', name: newName }).then((ok) => ok && setRenaming(false))
+                }
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <div className="row">
+              <div className="player-pill">
+                <span className="status" />
+                {view.you?.name}
+                <span style={{ color: teamColor(room.teams, view.you?.team ?? ''), fontSize: 12 }}>
+                  {view.you?.team}
+                </span>
+              </div>
+              {!view.you?.playing && <span className="muted">Your team sits out this round</span>}
+            </div>
+          )}
+        </div>
 
-          <div className="spread" style={{ alignItems: 'baseline' }}>
-            <h3>Categories</h3>
-            <span className="muted">
-              {selectedCount} prompts{!selected.length && ' · all selected'}
-            </span>
-          </div>
-          <div className="row" style={{ marginBottom: 16 }}>
-            {bank?.categories.map((category) => {
-              const on = !selected.length || selected.includes(category.id);
-              return (
-                <button
-                  key={category.id}
-                  className={`chip${on ? ' on' : ''}`}
-                  onClick={() => toggleCategory(category.id)}
-                  disabled={busy}
-                >
-                  <i className="dot" style={{ background: on ? 'currentColor' : category.color }} />
-                  {category.name}
-                  <span className="muted">{category.items.length}</span>
-                </button>
-              );
-            })}
-            {bank && !bank.categories.length && (
-              <Link className="btn sm" href="/questions">
-                The bank is empty → add prompts
-              </Link>
-            )}
-          </div>
-
-          <h3>Teams</h3>
-          <div className="row" style={{ marginBottom: 12 }}>
+        <div className="section">
+          <h3>Your team</h3>
+          <div className="row">
             {room.teams.map((team) => (
-              <span key={team} className="chip" style={{ cursor: 'default' }}>
-                <i className="dot" style={{ background: teamColor(room.teams, team) }} />
+              <button
+                key={team}
+                className={`chip${view.you?.team === team ? ' on' : ''}`}
+                disabled={busy}
+                onClick={() => act({ action: 'joinTeam', team })}
+              >
+                <i
+                  className="dot"
+                  style={{
+                    background:
+                      view.you?.team === team ? 'currentColor' : teamColor(room.teams, team),
+                  }}
+                />
                 {team}
-                {room.teams.length > 1 && (
-                  <b
-                    style={{ cursor: 'pointer', color: 'var(--muted)' }}
-                    title={`Remove ${team}`}
-                    onClick={() =>
-                      act({ action: 'setTeams', teams: room.teams.filter((t) => t !== team) })
-                    }
-                  >
-                    ✕
-                  </b>
-                )}
-              </span>
+                <span className="muted">{room.players.filter((p) => p.team === team).length}</span>
+              </button>
             ))}
           </div>
-          <div className="row" style={{ flexWrap: 'nowrap', marginBottom: 16 }}>
+          <div className="row" style={{ flexWrap: 'nowrap', marginTop: 10 }}>
             <input
               type="text"
               value={newTeam}
               maxLength={16}
               placeholder="New team name"
               onChange={(e) => setNewTeam(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && createTeam()}
             />
-            <button
-              className="btn"
-              disabled={!newTeam.trim() || room.teams.length >= 6}
-              onClick={() => {
-                void act({ action: 'setTeams', teams: [...room.teams, newTeam.trim()] });
-                setNewTeam('');
-              }}
-            >
-              + Add
+            <button className="btn" onClick={createTeam} disabled={busy || !newTeam.trim()}>
+              + Create team
             </button>
           </div>
-
-          <label className="row" style={{ marginBottom: 18, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={room.settings.skipPenalty}
-              onChange={(e) => act({ action: 'settings', skipPenalty: e.target.checked })}
-            />
-            <span>Skips cost 1 point (off by default)</span>
-          </label>
-
-          <button
-            className="btn primary block"
-            disabled={busy || !selectedCount}
-            onClick={() => act({ action: 'start' })}
-          >
-            🚀 Start game ({room.settings.durationSec}s)
-          </button>
-          {room.rounds > 0 && (
-            <button
-              className="btn ghost block"
-              style={{ marginTop: 10 }}
-              onClick={() => act({ action: 'clearHistory' })}
-            >
-              Clear overall scores
-            </button>
-          )}
         </div>
+
+        <div className="section">
+          <h3>Everyone here</h3>
+          <div className="row">
+            {room.players.map((player) => (
+              <div key={player.id} className="player-pill">
+                <span className={`status${player.online ? '' : ' off'}`} />
+                {player.name}
+                {player.isHost && ' 👑'}
+                <span style={{ color: teamColor(room.teams, player.team), fontSize: 12 }}>
+                  {player.team || 'no team'}
+                </span>
+                {admin && player.id !== view.you?.id && (
+                  <button
+                    className="btn sm ghost"
+                    title="Remove player"
+                    style={{ padding: '2px 6px' }}
+                    onClick={() => act({ action: 'kick', targetId: player.id })}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {admin ? (
+        <AdminPanel view={view} bank={bank} busy={busy} act={act} />
       ) : (
         <div className="card">
-          <h2>Waiting for the host…</h2>
+          <h2>Waiting for the admin…</h2>
           <p className="muted">
             This round runs for {room.settings.durationSec} seconds
-            {room.settings.skipPenalty ? ', skips cost a point' : ''}. Everyone answers at the same
-            time.
+            {room.settings.skipPenalty ? ', skips cost a point' : ''}. Teams playing:{' '}
+            {room.settings.activeTeams.join(', ') || 'none selected yet'}.
           </p>
         </div>
       )}
@@ -562,23 +593,239 @@ function Lobby({
   );
 }
 
+function AdminPanel({
+  view,
+  bank,
+  busy,
+  act,
+}: {
+  view: RoomView;
+  bank: Bank | null;
+  busy: boolean;
+  act: Act;
+}) {
+  const { room } = view;
+  const [duration, setDuration] = useState(room.settings.durationSec);
+  const [custom, setCustom] = useState(String(room.settings.durationSec));
+
+  useEffect(() => {
+    setDuration(room.settings.durationSec);
+    setCustom(String(room.settings.durationSec));
+  }, [room.settings.durationSec]);
+
+  const selected = room.settings.categoryIds;
+  const promptCount = room.promptCount ?? 0;
+  const allIds = useMemo(() => bank?.categories.map((c) => c.id) ?? [], [bank]);
+
+  function toggleCategory(id: string) {
+    const next = selected.includes(id) ? selected.filter((c) => c !== id) : [...selected, id];
+    void act({ action: 'settings', categoryIds: next });
+  }
+
+  function commitCustom() {
+    const value = Number(custom);
+    if (!Number.isFinite(value)) return setCustom(String(room.settings.durationSec));
+    void act({ action: 'settings', durationSec: value });
+  }
+
+  return (
+    <div className="card">
+      <h2>Host settings</h2>
+
+      <div className="section">
+        <h3>Countdown — {duration}s</h3>
+        <input
+          type="range"
+          min={MIN_DURATION}
+          max={300}
+          step={5}
+          value={duration}
+          onChange={(e) => setDuration(Number(e.target.value))}
+          onMouseUp={() => act({ action: 'settings', durationSec: duration })}
+          onTouchEnd={() => act({ action: 'settings', durationSec: duration })}
+        />
+        <div className="row" style={{ marginTop: 10 }}>
+          {DURATION_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              className={`chip${room.settings.durationSec === preset ? ' on' : ''}`}
+              onClick={() => act({ action: 'settings', durationSec: preset })}
+            >
+              {preset}s
+            </button>
+          ))}
+          <span className="chip" style={{ cursor: 'default', gap: 8 }}>
+            Custom
+            <input
+              type="number"
+              min={MIN_DURATION}
+              max={MAX_DURATION}
+              value={custom}
+              placeholder={`${MIN_DURATION}-${MAX_DURATION}`}
+              style={{ width: 78, padding: '4px 8px', borderRadius: 8 }}
+              // Clearing on focus means you type the number instead of editing it.
+              onFocus={() => setCustom('')}
+              onChange={(e) => setCustom(e.target.value)}
+              onBlur={commitCustom}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            />
+            s
+          </span>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head">
+          <h3>Categories in play</h3>
+          <span className="muted">
+            {selected.length}/{allIds.length} selected · {promptCount} questions
+          </span>
+        </div>
+        <div className="row" style={{ marginBottom: 10 }}>
+          {bank?.categories.map((category) => {
+            const on = selected.includes(category.id);
+            return (
+              <button
+                key={category.id}
+                className={`chip${on ? ' on' : ' off'}`}
+                onClick={() => toggleCategory(category.id)}
+                disabled={busy}
+                title={on ? 'Included — click to exclude' : 'Excluded — click to include'}
+              >
+                <i className="dot" style={{ background: on ? 'currentColor' : category.color }} />
+                {category.name}
+                <span className="muted">{category.items.length}</span>
+              </button>
+            );
+          })}
+          {bank && !bank.categories.length && (
+            <Link className="btn sm" href="/questions">
+              The bank is empty → add questions
+            </Link>
+          )}
+        </div>
+        <div className="row tight">
+          <button
+            className="btn sm ghost"
+            onClick={() => act({ action: 'settings', categoryIds: allIds })}
+          >
+            Select all
+          </button>
+          <button
+            className="btn sm ghost"
+            onClick={() => act({ action: 'settings', categoryIds: [] })}
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head">
+          <h3>Teams in this round</h3>
+          <span className="muted">{room.settings.activeTeams.length} playing</span>
+        </div>
+        <div className="board">
+          {room.teams.map((team) => {
+            const active = room.settings.activeTeams.includes(team);
+            const size = room.players.filter((p) => p.team === team).length;
+            return (
+              <div key={team} className={`team-row${active ? '' : ' out'}`}>
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background: teamColor(room.teams, team),
+                    flex: 'none',
+                  }}
+                />
+                <span className="grow">
+                  <b>{team}</b>
+                  <span className="muted">
+                    {size} {size === 1 ? 'player' : 'players'} · {active ? 'playing' : 'sitting out'}
+                  </span>
+                </span>
+                <button
+                  className={`chip${active ? ' on' : ''}`}
+                  disabled={busy}
+                  onClick={() => act({ action: 'setTeamActive', team, active: !active })}
+                >
+                  {active ? 'In' : 'Out'}
+                </button>
+                <button
+                  className="btn sm ghost"
+                  title={`Delete ${team}`}
+                  disabled={busy}
+                  onClick={() =>
+                    confirm(`Delete team “${team}”? Its players go back to picking a team.`) &&
+                    act({ action: 'removeTeam', team })
+                  }
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+          {!room.teams.length && <div className="empty">No teams yet — players create their own.</div>}
+        </div>
+      </div>
+
+      <label className="switch" style={{ marginBottom: 18 }}>
+        <input
+          type="checkbox"
+          checked={room.settings.skipPenalty}
+          onChange={(e) => act({ action: 'settings', skipPenalty: e.target.checked })}
+        />
+        <span className="track" />
+        <span className="switch-label">
+          Skips cost 1 point
+          <span className="switch-hint">
+            {room.settings.skipPenalty
+              ? 'A skip takes a point off the team score.'
+              : 'A skip is simply worth nothing.'}
+          </span>
+        </span>
+      </label>
+
+      <button
+        className="btn primary block"
+        disabled={busy || !promptCount || !room.settings.activeTeams.length}
+        onClick={() => act({ action: 'start' })}
+      >
+        🚀 Start game ({room.settings.durationSec}s)
+      </button>
+      {room.rounds > 0 && (
+        <button
+          className="btn ghost block"
+          style={{ marginTop: 10 }}
+          onClick={() => act({ action: 'clearHistory' })}
+        >
+          Clear overall scores
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Play({
   view,
   remainingMs,
   busy,
   act,
-  isHost,
+  admin,
 }: {
   view: RoomView;
   remainingMs: number;
   busy: boolean;
-  act: (body: Record<string, unknown>) => Promise<unknown>;
-  isHost: boolean;
+  act: Act;
+  admin: boolean;
 }) {
   const { room, card, myStats } = view;
   const total = room.settings.durationSec * 1000;
   const pct = Math.max(0, Math.min(100, (remainingMs / total) * 100));
   const low = remainingMs <= 10_000;
+  const playing = !!view.you?.playing;
 
   return (
     <>
@@ -587,10 +834,12 @@ function Play({
           <div>
             <div className={`timer${low ? ' low' : ''}`}>{formatClock(remainingMs)}</div>
             <p className="muted" style={{ margin: '6px 0 0' }}>
-              {view.you?.team} · {myStats?.correct ?? 0} correct · {myStats?.skipped ?? 0} skipped
+              {playing
+                ? `${view.you?.team} · ${myStats?.correct ?? 0} correct · ${myStats?.skipped ?? 0} skipped`
+                : 'Your team is sitting this round out'}
             </p>
           </div>
-          {isHost && (
+          {admin && (
             <button className="btn sm danger" onClick={() => act({ action: 'finish' })}>
               End now
             </button>
@@ -600,37 +849,43 @@ function Play({
           <i style={{ width: `${pct}%` }} />
         </div>
 
-        <div className="word-card">
-          {card ? (
-            <div>
-              <div className="word">{card.text}</div>
-              <span className="tag" style={{ color: card.color }}>
-                {card.categoryName}
-              </span>
+        {playing ? (
+          <>
+            <div className="word-card">
+              {card ? (
+                <div>
+                  <div className="word">{card.text}</div>
+                  <span className="tag" style={{ color: card.color }}>
+                    {card.categoryName}
+                  </span>
+                </div>
+              ) : (
+                <div className="word" style={{ fontSize: 24 }}>
+                  Deck finished 🎉
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="word" style={{ fontSize: 24 }}>
-              Deck finished 🎉
-            </div>
-          )}
-        </div>
 
-        <div className="answer-buttons">
-          <button
-            className="correct"
-            disabled={busy || !card}
-            onClick={() => act({ action: 'answer', result: 'correct' })}
-          >
-            ✓ Correct
-          </button>
-          <button
-            className="skip"
-            disabled={busy || !card}
-            onClick={() => act({ action: 'answer', result: 'skip' })}
-          >
-            ⏭ Skip
-          </button>
-        </div>
+            <div className="answer-buttons">
+              <button
+                className="correct"
+                disabled={busy || !card}
+                onClick={() => act({ action: 'answer', result: 'correct' })}
+              >
+                ✓ Correct
+              </button>
+              <button
+                className="skip"
+                disabled={busy || !card}
+                onClick={() => act({ action: 'answer', result: 'skip' })}
+              >
+                ⏭ Skip
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="empty">Watching this round — the scores update live below.</div>
+        )}
       </div>
 
       <Scoreboard
@@ -645,14 +900,14 @@ function Play({
 
 function Dashboard({
   view,
-  isHost,
+  admin,
   busy,
   act,
 }: {
   view: RoomView;
-  isHost: boolean;
+  admin: boolean;
   busy: boolean;
-  act: (body: Record<string, unknown>) => Promise<unknown>;
+  act: Act;
 }) {
   const { room, scores, log } = view;
   const [tab, setTab] = useState<'round' | 'total'>('round');
@@ -675,7 +930,7 @@ function Dashboard({
             Overall ({room.rounds})
           </button>
         </div>
-        {isHost ? (
+        {admin ? (
           <div className="row">
             <button className="btn primary" disabled={busy} onClick={() => act({ action: 'start' })}>
               🔁 Play again
@@ -692,7 +947,7 @@ function Dashboard({
             </button>
           </div>
         ) : (
-          <p className="muted">Waiting for the host to start the next round…</p>
+          <p className="muted">Waiting for the admin to start the next round…</p>
         )}
       </div>
 

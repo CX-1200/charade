@@ -4,7 +4,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Charade Party',
   description:
-    'Multiplayer charades in the browser: build your own prompt bank, split into teams, race the clock.',
+    'Multiplayer charades in the browser: build your own question bank, split into teams, race the clock.',
 };
 
 export const viewport: Viewport = {

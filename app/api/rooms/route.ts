@@ -1,17 +1,26 @@
 import { NextResponse } from 'next/server';
-import { createRoom, HttpError, clean } from '@/lib/game';
+import { requireAdmin } from '@/lib/admin';
+import { clean, createRoom, getBank } from '@/lib/game';
+import { HttpError } from '@/lib/errors';
 import { publicRoom } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { name?: string; team?: string };
+    const body = (await request.json()) as { name?: string; adminToken?: string };
+    // Only an unlocked admin opens rooms.
+    requireAdmin(body.adminToken);
     const name = clean(body.name, 20);
     if (!name) throw new HttpError(400, 'Please enter your name');
-    const room = await createRoom(name, clean(body.team, 16));
+    const room = await createRoom(name);
     const host = room.players[0];
-    return NextResponse.json({ ...publicRoom(room, host.id), playerId: host.id, code: room.code });
+    const bank = await getBank();
+    return NextResponse.json({
+      ...publicRoom(room, host.id, { admin: true, bank }),
+      playerId: host.id,
+      code: room.code,
+    });
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
     return NextResponse.json(

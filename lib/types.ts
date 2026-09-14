@@ -22,6 +22,7 @@ export type RoomState = 'lobby' | 'playing' | 'finished';
 export type Player = {
   id: string;
   name: string;
+  /** Empty until the player picks or creates a team. */
   team: string;
   isHost: boolean;
   joinedAt: number;
@@ -49,10 +50,12 @@ export type LogEntry = {
 };
 
 export type RoomSettings = {
-  /** Round length in seconds, chosen by the host. */
+  /** Round length in seconds, chosen by the admin. */
   durationSec: number;
-  /** Empty array means "every category". */
+  /** Categories included in the round — an explicit list, never implicit "all". */
   categoryIds: string[];
+  /** Teams taking part in the round; others sit it out. */
+  activeTeams: string[];
   /** When true a skip costs the team one point. */
   skipPenalty: boolean;
 };
@@ -80,6 +83,8 @@ export type Room = {
   startedAt: number | null;
   endsAt: number | null;
   createdAt: number;
+  /** Hard end of life — the room shuts itself down at this moment. */
+  closesAt: number;
   updatedAt: number;
 };
 

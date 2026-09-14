@@ -66,7 +66,7 @@ export default function QuestionsPage() {
     <main className="shell">
       <div className="topbar">
         <div className="brand">
-          <span className="logo">📚</span> Prompt bank
+          <span className="logo">📚</span> Question Bank
         </div>
         <Link className="btn sm ghost" href="/">
           ← Back home
@@ -80,7 +80,7 @@ export default function QuestionsPage() {
           <div>
             <h2 style={{ margin: 0 }}>Categories</h2>
             <p className="muted">
-              {bank?.categories.length ?? 0} categories · {total} prompts
+              {bank?.categories.length ?? 0} categories · {total} questions
             </p>
           </div>
         </div>
@@ -126,7 +126,7 @@ export default function QuestionsPage() {
                       className="btn sm danger"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Delete “${category.name}” and all of its prompts?`)) {
+                        if (confirm(`Delete “${category.name}” and all of its questions?`)) {
                           void mutate({ action: 'deleteCategory', categoryId: category.id });
                         }
                       }}
@@ -147,10 +147,10 @@ export default function QuestionsPage() {
             {active ? (
               <>
                 <h3>
-                  Prompts in “{active.name}” ({active.items.length})
+                  Questions in “{active.name}” ({active.items.length})
                 </h3>
                 <label className="field">
-                  <span>Bulk add — one per line, commas work too</span>
+                  <span>Bulk add — one question per line, commas work too</span>
                   <textarea
                     value={draft}
                     placeholder={'Giraffe\nPlaying basketball\nTitanic'}
@@ -180,11 +180,11 @@ export default function QuestionsPage() {
                       </button>
                     </div>
                   ))}
-                  {!active.items.length && <div className="empty">No prompts in here yet.</div>}
+                  {!active.items.length && <div className="empty">No questions in here yet.</div>}
                 </div>
               </>
             ) : (
-              <div className="empty">Pick a category on the left to edit its prompts.</div>
+              <div className="empty">Pick a category on the left to edit its questions.</div>
             )}
           </div>
         </div>
@@ -192,8 +192,8 @@ export default function QuestionsPage() {
 
       <div className="card">
         <p className="muted" style={{ margin: 0 }}>
-          💡 When a round starts, every category the host selected is <b>shuffled into one deck</b>.
-          Players draw from it in turn, so nobody gets the same prompt twice.
+          💡 When a round starts, every category the admin selected is <b>shuffled into one deck</b>.
+          Players draw from it in turn, so nobody gets the same question twice.
         </p>
       </div>
     </main>

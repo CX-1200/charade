@@ -112,7 +112,7 @@ label.field > span {
 
 input, select, textarea, button { font: inherit; font-family: inherit; }
 
-input[type='text'], input[type='number'], select, textarea {
+input[type='text'], input[type='number'], input[type='password'], select, textarea {
   width: 100%;
   padding: 11px 14px;
   border-radius: 10px;
@@ -381,3 +381,97 @@ input[type='checkbox'] { width: 17px; height: 17px; accent-color: var(--accent);
   .timer { font-size: 46px; }
   .code-pill { font-size: 21px; letter-spacing: 5px; }
 }
+
+
+/* ------------------------------------------------------------------ cta */
+
+.cta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--cream);
+  border: 1px solid var(--accent);
+  transition: filter 0.15s, transform 0.08s;
+}
+.cta:hover { filter: brightness(1.08); text-decoration: none; }
+.cta:active { transform: translateY(1px); }
+.cta-icon { font-size: 28px; line-height: 1; }
+.cta-body { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.cta-body b { font-size: 18px; letter-spacing: -0.2px; }
+.cta-body span { font-size: 13px; color: rgba(224, 218, 206, 0.82); line-height: 1.45; }
+.cta-arrow { font-size: 22px; font-weight: 700; }
+
+/* --------------------------------------------------------------- switch */
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  user-select: none;
+}
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 25px;
+  border-radius: 999px;
+  background: rgba(36, 29, 23, 0.2);
+  transition: background 0.18s;
+}
+.switch .track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fffdf8;
+  box-shadow: 0 1px 2px rgba(36, 29, 23, 0.3);
+  transition: transform 0.18s;
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(19px); }
+.switch .switch-label { font-weight: 600; font-size: 14px; }
+.switch .switch-hint { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 2px; }
+.switch:has(input:focus-visible) { border-color: var(--accent); }
+
+/* ------------------------------------------------------------- sections */
+
+.section { margin-bottom: 20px; }
+.section:last-child { margin-bottom: 0; }
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.section-head h3 { margin: 0; }
+
+.chip.off { opacity: 0.55; border-style: dashed; }
+.chip .x { color: inherit; opacity: 0.65; font-weight: 700; padding-left: 2px; }
+.chip .x:hover { opacity: 1; }
+
+.team-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.team-row.out { opacity: 0.55; }
+.team-row .grow { flex: 1; min-width: 0; }
+.team-row b { display: block; }

@@ -1,21 +1,25 @@
 import { NextResponse } from 'next/server';
+import { isAdmin, requireAdmin } from '@/lib/admin';
+import { HttpError } from '@/lib/errors';
 import {
   answer,
   applySettings,
   buildDeck,
   clean,
   clearHistory,
+  createTeam,
   finishRound,
   getBank,
   getRoom,
-  HttpError,
   joinRoom,
+  joinTeam,
   removePlayer,
-  requireHost,
+  removeTeam,
+  renamePlayer,
   requirePlayer,
   resetRoom,
   saveRoom,
-  setTeams,
+  setTeamActive,
   startRound,
   touch,
   withRoom,
@@ -27,6 +31,18 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ code: string }> };
 
+/** Actions only an unlocked admin may perform. */
+const ADMIN_ACTIONS = new Set([
+  'settings',
+  'removeTeam',
+  'setTeamActive',
+  'start',
+  'finish',
+  'reset',
+  'clearHistory',
+  'kick',
+]);
+
 function fail(error: unknown) {
   const status = error instanceof HttpError ? error.status : 500;
   return NextResponse.json(
@@ -35,17 +51,24 @@ function fail(error: unknown) {
   );
 }
 
+const roomClosed = () =>
+  NextResponse.json({ error: 'Room closed — everybody left', closed: true }, { status: 410 });
+
 /** Poll endpoint: returns the whole room view and keeps the caller's presence warm. */
 export async function GET(request: Request, ctx: Ctx) {
   try {
     const { code } = await ctx.params;
-    const playerId = new URL(request.url).searchParams.get('playerId');
+    const params = new URL(request.url).searchParams;
+    const playerId = params.get('playerId');
+    const admin = isAdmin(params.get('adminToken'));
+
     const room = await getRoom(code);
-    if (!room) throw new HttpError(404, 'Room not found or expired');
+    if (!room) throw new HttpError(404, 'Room not found or closed');
 
     const before = room.state;
     touch(room, playerId);
-    const view = settleAndSerialize(room, playerId);
+    const bank = await getBank();
+    const view = settleAndSerialize(room, playerId, { admin, bank });
     // Presence + auto-finish are cheap writes; only persist when something moved.
     if (playerId || before !== room.state) await saveRoom(room);
     return NextResponse.json(view);
@@ -60,6 +83,9 @@ export async function POST(request: Request, ctx: Ctx) {
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? '');
     const playerId = typeof body.playerId === 'string' ? body.playerId : null;
+    const admin = isAdmin(body.adminToken);
+    if (ADMIN_ACTIONS.has(action)) requireAdmin(body.adminToken);
+
     let joinedId: string | null = null;
 
     const room = await withRoom(code, async (draft) => {
@@ -72,7 +98,7 @@ export async function POST(request: Request, ctx: Ctx) {
             joinedId = existing.id;
             break;
           }
-          const player = joinRoom(draft, clean(body.name, 20), clean(body.team, 16));
+          const player = joinRoom(draft, clean(body.name, 20));
           joinedId = player.id;
           break;
         }
@@ -80,22 +106,33 @@ export async function POST(request: Request, ctx: Ctx) {
           if (playerId) removePlayer(draft, playerId);
           break;
         }
-        case 'setTeam': {
-          const player = requirePlayer(draft, playerId ?? '');
-          const team = clean(body.team, 16);
-          if (!draft.teams.includes(team)) throw new HttpError(400, 'That team does not exist');
-          player.team = team;
+        case 'rename': {
+          renamePlayer(draft, playerId ?? '', clean(body.name, 20));
           break;
         }
-        case 'setTeams': {
-          requireHost(draft, playerId ?? '');
-          if (draft.state === 'playing') throw new HttpError(409, 'Teams cannot be changed mid-round');
-          setTeams(draft, Array.isArray(body.teams) ? (body.teams as string[]) : []);
+        case 'joinTeam': {
+          joinTeam(draft, playerId ?? '', clean(body.team, 16));
+          break;
+        }
+        case 'createTeam': {
+          requirePlayer(draft, playerId ?? '');
+          createTeam(draft, playerId ?? '', clean(body.team, 16));
+          break;
+        }
+        case 'removeTeam': {
+          if (draft.state === 'playing') throw new HttpError(409, 'Not while a round is running');
+          removeTeam(draft, clean(body.team, 16));
+          break;
+        }
+        case 'setTeamActive': {
+          if (draft.state === 'playing') throw new HttpError(409, 'Not while a round is running');
+          setTeamActive(draft, clean(body.team, 16), body.active !== false);
           break;
         }
         case 'settings': {
-          requireHost(draft, playerId ?? '');
-          if (draft.state === 'playing') throw new HttpError(409, 'Settings cannot be changed mid-round');
+          if (draft.state === 'playing') {
+            throw new HttpError(409, 'Settings cannot be changed mid-round');
+          }
           applySettings(draft, {
             durationSec: body.durationSec as number,
             categoryIds: body.categoryIds as string[],
@@ -104,7 +141,6 @@ export async function POST(request: Request, ctx: Ctx) {
           break;
         }
         case 'start': {
-          requireHost(draft, playerId ?? '');
           const bank = await getBank();
           startRound(draft, buildDeck(bank, draft.settings.categoryIds));
           break;
@@ -115,23 +151,19 @@ export async function POST(request: Request, ctx: Ctx) {
           break;
         }
         case 'finish': {
-          requireHost(draft, playerId ?? '');
           finishRound(draft);
           break;
         }
         case 'reset': {
-          requireHost(draft, playerId ?? '');
           resetRoom(draft);
           break;
         }
         case 'clearHistory': {
-          requireHost(draft, playerId ?? '');
           clearHistory(draft);
           resetRoom(draft);
           break;
         }
         case 'kick': {
-          requireHost(draft, playerId ?? '');
           removePlayer(draft, String(body.targetId ?? ''));
           break;
         }
@@ -142,8 +174,15 @@ export async function POST(request: Request, ctx: Ctx) {
       }
     });
 
+    // withRoom returns null when the last player left and the room shut down.
+    if (!room) return roomClosed();
+
     const viewer = joinedId ?? playerId;
-    return NextResponse.json({ ...publicRoom(room, viewer), playerId: viewer });
+    const bank = await getBank();
+    return NextResponse.json({
+      ...publicRoom(room, viewer, { admin, bank }),
+      playerId: viewer,
+    });
   } catch (error) {
     return fail(error);
   }

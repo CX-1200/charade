@@ -1,12 +1,17 @@
-import { roundScores, settle, totalScores } from './game';
-import type { Room } from './types';
+import { countPrompts, roundScores, settle, totalScores } from './game';
+import type { Bank, Room } from './types';
 
 /** Everything the client is allowed to see — note the deck never leaves the server. */
-export function publicRoom(room: Room, playerId?: string | null) {
+export function publicRoom(
+  room: Room,
+  playerId?: string | null,
+  opts: { admin?: boolean; bank?: Bank | null } = {},
+) {
   const now = Date.now();
   const you = playerId ? room.players.find((p) => p.id === playerId) ?? null : null;
   return {
     now,
+    admin: !!opts.admin,
     room: {
       code: room.code,
       hostId: room.hostId,
@@ -23,12 +28,21 @@ export function publicRoom(room: Room, playerId?: string | null) {
       startedAt: room.startedAt,
       endsAt: room.endsAt,
       remainingMs: room.endsAt ? Math.max(0, room.endsAt - now) : 0,
+      closesAt: room.closesAt,
+      closesInMs: Math.max(0, room.closesAt - now),
       answered: room.log.length,
       deckSize: room.deck.length,
+      promptCount: opts.bank ? countPrompts(opts.bank, room.settings.categoryIds) : null,
       rounds: room.history.length,
       updatedAt: room.updatedAt,
     },
-    you: you && { id: you.id, name: you.name, team: you.team, isHost: you.id === room.hostId },
+    you: you && {
+      id: you.id,
+      name: you.name,
+      team: you.team,
+      isHost: you.id === room.hostId,
+      playing: !!you.team && room.settings.activeTeams.includes(you.team),
+    },
     card: you ? room.current[you.id] ?? null : null,
     myStats: you
       ? {
@@ -41,9 +55,13 @@ export function publicRoom(room: Room, playerId?: string | null) {
   };
 }
 
-export function settleAndSerialize(room: Room, playerId?: string | null) {
+export function settleAndSerialize(
+  room: Room,
+  playerId?: string | null,
+  opts: { admin?: boolean; bank?: Bank | null } = {},
+) {
   settle(room);
-  return publicRoom(room, playerId);
+  return publicRoom(room, playerId, opts);
 }
 
 export type RoomView = ReturnType<typeof publicRoom>;
