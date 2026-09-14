@@ -99,7 +99,7 @@ export default function RoomClient({ code }: { code: string }) {
 
   async function join() {
     const name = joinName.trim();
-    if (!name) return setError('请输入你的名字');
+    if (!name) return setError('Enter your name');
     session.setName(name);
     await act({ action: 'join', name });
   }
@@ -126,9 +126,9 @@ export default function RoomClient({ code }: { code: string }) {
     return (
       <main className="shell">
         <Header code={code} />
-        {error ? <div className="err">{error}</div> : <div className="empty">加载中…</div>}
+        {error ? <div className="err">{error}</div> : <div className="empty">Loading…</div>}
         <Link className="btn ghost" href="/">
-          ← 回首页
+          ← Back home
         </Link>
       </main>
     );
@@ -139,11 +139,14 @@ export default function RoomClient({ code }: { code: string }) {
       <main className="shell">
         <Header code={code} />
         <div className="card">
-          <h1>加入房间 {code}</h1>
-          <p className="sub">房间里已经有 {room.players.length} 位玩家。</p>
+          <h1>Join room {code}</h1>
+          <p className="sub">
+            {room.players.length} {room.players.length === 1 ? 'player is' : 'players are'} already
+            here.
+          </p>
           {error && <div className="err">{error}</div>}
           <label className="field">
-            <span>你的名字</span>
+            <span>Your name</span>
             <input
               type="text"
               value={joinName}
@@ -153,7 +156,7 @@ export default function RoomClient({ code }: { code: string }) {
             />
           </label>
           <button className="btn primary block" onClick={join} disabled={busy}>
-            进入大厅
+            Enter lobby
           </button>
         </div>
       </main>
@@ -189,8 +192,8 @@ export default function RoomClient({ code }: { code: string }) {
       {room.state === 'finished' && <Dashboard view={view} isHost={isHost} busy={busy} act={act} />}
 
       <p className="muted" style={{ marginTop: 20, textAlign: 'center' }}>
-        {playerId ? '已登录' : ''} · 房间 {code} · <Link href="/questions">题库管理</Link> ·{' '}
-        <Link href="/">首页</Link>
+        {playerId ? 'Signed in · ' : ''}Room {code} · <Link href="/questions">Prompt bank</Link> ·{' '}
+        <Link href="/">Home</Link>
       </p>
     </main>
   );
@@ -212,7 +215,7 @@ function Header({
   return (
     <div className="topbar">
       <div className="brand">
-        <span className="logo">🎭</span> 房间 <span className="code-pill">{code}</span>
+        <span className="logo">🎭</span> Room <span className="code-pill">{code}</span>
       </div>
       {you && (
         <div className="player-pill">
@@ -244,8 +247,10 @@ function Scoreboard({
         {hint && <span className="muted">{hint}</span>}
       </div>
       <div className="board">
-        {scores.map((row, index) => (
-          <div key={row.team} className={`board-row${index === 0 && row.score > 0 ? ' lead' : ''}`}>
+        {scores.map((row, index) => {
+          const lead = index === 0 && row.score > 0;
+          return (
+          <div key={row.team} className={`board-row${lead ? ' lead' : ''}`}>
             <div className="rank">{medals[index] ?? index + 1}</div>
             <div>
               <div className="team-name">
@@ -254,12 +259,13 @@ function Scoreboard({
                     width: 10,
                     height: 10,
                     borderRadius: '50%',
-                    background: teamColor(teams, row.team),
+                    // On the red leader row a red dot would disappear.
+                    background: lead ? 'var(--cream)' : teamColor(teams, row.team),
                   }}
                 />
                 {row.team}
               </div>
-              <div className="roster">{row.players.join('、') || '暂无成员'}</div>
+              <div className="roster">{row.players.join(', ') || 'No members yet'}</div>
             </div>
             <div className="pts">
               <b>{row.score}</b>
@@ -268,8 +274,9 @@ function Scoreboard({
               </small>
             </div>
           </div>
-        ))}
-        {!scores.length && <div className="empty">还没有分数。</div>}
+          );
+        })}
+        {!scores.length && <div className="empty">No scores yet.</div>}
       </div>
     </div>
   );
@@ -322,7 +329,7 @@ function Lobby({
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      window.prompt('复制这个链接分享给朋友：', url);
+      window.prompt('Copy this link and share it:', url);
     }
   }
 
@@ -331,35 +338,43 @@ function Lobby({
       <div className="card">
         <div className="spread" style={{ marginBottom: 14 }}>
           <div>
-            <h2 style={{ margin: 0 }}>大厅 · {room.players.length} 人在线</h2>
-            <p className="muted">把房间号或链接发给朋友，他们就能加入同一局。</p>
+            <h2 style={{ margin: 0 }}>
+              Lobby · {room.players.length} {room.players.length === 1 ? 'player' : 'players'}
+            </h2>
+            <p className="muted">Share the room code or link and everyone lands in this game.</p>
           </div>
           <div className="row tight">
             <button className="btn sm" onClick={copyInvite}>
-              {copied ? '✓ 已复制' : '🔗 复制邀请链接'}
+              {copied ? '✓ Copied' : '🔗 Copy invite link'}
             </button>
             <button className="btn sm ghost" onClick={onLeave}>
-              退出
+              Leave
             </button>
           </div>
         </div>
 
-        <h3>选择你的组别</h3>
+        <h3>Pick your team</h3>
         <div className="row" style={{ marginBottom: 16 }}>
           {room.teams.map((team) => (
             <button
               key={team}
               className={`chip${view.you?.team === team ? ' on' : ''}`}
-              style={{ color: teamColor(room.teams, team) }}
               onClick={() => act({ action: 'setTeam', team })}
               disabled={busy}
             >
-              <i className="dot" /> <span style={{ color: 'var(--text)' }}>{team}</span>
+              <i
+                className="dot"
+                style={{
+                  background:
+                    view.you?.team === team ? 'currentColor' : teamColor(room.teams, team),
+                }}
+              />
+              {team}
             </button>
           ))}
         </div>
 
-        <h3>玩家</h3>
+        <h3>Players</h3>
         <div className="row">
           {room.players.map((player) => (
             <div key={player.id} className="player-pill">
@@ -372,6 +387,7 @@ function Lobby({
               {isHost && !player.isHost && (
                 <button
                   className="btn sm ghost"
+                  title="Remove player"
                   style={{ padding: '2px 6px' }}
                   onClick={() => act({ action: 'kick', targetId: player.id })}
                 >
@@ -385,10 +401,10 @@ function Lobby({
 
       {isHost ? (
         <div className="card">
-          <h2>房主设置</h2>
+          <h2>Host settings</h2>
 
           <label className="field">
-            <span>倒计时时长：{duration} 秒</span>
+            <span>Countdown: {duration} seconds</span>
             <input
               type="range"
               min={MIN_DURATION}
@@ -407,11 +423,11 @@ function Lobby({
                 className={`chip${room.settings.durationSec === preset ? ' on' : ''}`}
                 onClick={() => act({ action: 'settings', durationSec: preset })}
               >
-                {preset} 秒
+                {preset}s
               </button>
             ))}
             <span className="chip" style={{ cursor: 'default', gap: 8 }}>
-              自定义
+              Custom
               <input
                 type="number"
                 min={MIN_DURATION}
@@ -424,14 +440,16 @@ function Lobby({
                   e.key === 'Enter' && act({ action: 'settings', durationSec: duration })
                 }
               />
-              秒
+              s
             </span>
           </div>
 
-          <h3>
-            出题分类 · 本轮题库 {selectedCount} 题
-            {!selected.length && '（全部分类）'}
-          </h3>
+          <div className="spread" style={{ alignItems: 'baseline' }}>
+            <h3>Categories</h3>
+            <span className="muted">
+              {selectedCount} prompts{!selected.length && ' · all selected'}
+            </span>
+          </div>
           <div className="row" style={{ marginBottom: 16 }}>
             {bank?.categories.map((category) => {
               const on = !selected.length || selected.includes(category.id);
@@ -442,7 +460,7 @@ function Lobby({
                   onClick={() => toggleCategory(category.id)}
                   disabled={busy}
                 >
-                  <i className="dot" style={{ color: category.color }} />
+                  <i className="dot" style={{ background: on ? 'currentColor' : category.color }} />
                   {category.name}
                   <span className="muted">{category.items.length}</span>
                 </button>
@@ -450,20 +468,21 @@ function Lobby({
             })}
             {bank && !bank.categories.length && (
               <Link className="btn sm" href="/questions">
-                题库是空的 → 去添加题目
+                The bank is empty → add prompts
               </Link>
             )}
           </div>
 
-          <h3>组别</h3>
+          <h3>Teams</h3>
           <div className="row" style={{ marginBottom: 12 }}>
             {room.teams.map((team) => (
-              <span key={team} className="chip" style={{ color: teamColor(room.teams, team) }}>
-                <i className="dot" />
-                <span style={{ color: 'var(--text)' }}>{team}</span>
+              <span key={team} className="chip" style={{ cursor: 'default' }}>
+                <i className="dot" style={{ background: teamColor(room.teams, team) }} />
+                {team}
                 {room.teams.length > 1 && (
                   <b
                     style={{ cursor: 'pointer', color: 'var(--muted)' }}
+                    title={`Remove ${team}`}
                     onClick={() =>
                       act({ action: 'setTeams', teams: room.teams.filter((t) => t !== team) })
                     }
@@ -479,7 +498,7 @@ function Lobby({
               type="text"
               value={newTeam}
               maxLength={16}
-              placeholder="新组别名称"
+              placeholder="New team name"
               onChange={(e) => setNewTeam(e.target.value)}
             />
             <button
@@ -490,7 +509,7 @@ function Lobby({
                 setNewTeam('');
               }}
             >
-              + 添加
+              + Add
             </button>
           </div>
 
@@ -500,7 +519,7 @@ function Lobby({
               checked={room.settings.skipPenalty}
               onChange={(e) => act({ action: 'settings', skipPenalty: e.target.checked })}
             />
-            <span>跳过扣 1 分（默认不扣分）</span>
+            <span>Skips cost 1 point (off by default)</span>
           </label>
 
           <button
@@ -508,7 +527,7 @@ function Lobby({
             disabled={busy || !selectedCount}
             onClick={() => act({ action: 'start' })}
           >
-            🚀 开始游戏（{room.settings.durationSec} 秒）
+            🚀 Start game ({room.settings.durationSec}s)
           </button>
           {room.rounds > 0 && (
             <button
@@ -516,26 +535,27 @@ function Lobby({
               style={{ marginTop: 10 }}
               onClick={() => act({ action: 'clearHistory' })}
             >
-              清空累计成绩
+              Clear overall scores
             </button>
           )}
         </div>
       ) : (
         <div className="card">
-          <h2>等待房主开始…</h2>
+          <h2>Waiting for the host…</h2>
           <p className="muted">
-            本轮时长 {room.settings.durationSec} 秒
-            {room.settings.skipPenalty ? ' · 跳过扣分' : ''}。开始后大家同时作答。
+            This round runs for {room.settings.durationSec} seconds
+            {room.settings.skipPenalty ? ', skips cost a point' : ''}. Everyone answers at the same
+            time.
           </p>
         </div>
       )}
 
       {room.rounds > 0 && (
         <Scoreboard
-          title="累计成绩"
+          title="Overall standings"
           scores={view.scores.total}
           teams={room.teams}
-          hint={`已进行 ${room.rounds} 轮`}
+          hint={`${room.rounds} ${room.rounds === 1 ? 'round' : 'rounds'} played`}
         />
       )}
     </>
@@ -567,12 +587,12 @@ function Play({
           <div>
             <div className={`timer${low ? ' low' : ''}`}>{formatClock(remainingMs)}</div>
             <p className="muted" style={{ margin: '6px 0 0' }}>
-              本组：{view.you?.team} · 我答对 {myStats?.correct ?? 0} 题 · 跳过 {myStats?.skipped ?? 0}
+              {view.you?.team} · {myStats?.correct ?? 0} correct · {myStats?.skipped ?? 0} skipped
             </p>
           </div>
           {isHost && (
             <button className="btn sm danger" onClick={() => act({ action: 'finish' })}>
-              提前结束
+              End now
             </button>
           )}
         </div>
@@ -590,7 +610,7 @@ function Play({
             </div>
           ) : (
             <div className="word" style={{ fontSize: 24 }}>
-              题目已抽完 🎉
+              Deck finished 🎉
             </div>
           )}
         </div>
@@ -601,23 +621,23 @@ function Play({
             disabled={busy || !card}
             onClick={() => act({ action: 'answer', result: 'correct' })}
           >
-            ✓ 正确
+            ✓ Correct
           </button>
           <button
             className="skip"
             disabled={busy || !card}
             onClick={() => act({ action: 'answer', result: 'skip' })}
           >
-            ⏭ 跳过
+            ⏭ Skip
           </button>
         </div>
       </div>
 
       <Scoreboard
-        title="实时比分"
+        title="Live scores"
         scores={view.scores.round}
         teams={room.teams}
-        hint={`本轮已作答 ${room.answered} 次`}
+        hint={`${room.answered} answered this round`}
       />
     </>
   );
@@ -641,46 +661,50 @@ function Dashboard({
   return (
     <>
       <div className="card">
-        <h1>🏁 时间到！</h1>
+        <h1>🏁 Time&rsquo;s up</h1>
         <p className="sub">
           {winner && winner.score > 0
-            ? `本轮领先：${winner.team}（${winner.score} 分）`
-            : '本轮还没有人得分。'}
+            ? `${winner.team} leads this round with ${winner.score} ${winner.score === 1 ? 'point' : 'points'}.`
+            : 'Nobody scored this round.'}
         </p>
         <div className="tabs">
           <button className={tab === 'round' ? 'on' : ''} onClick={() => setTab('round')}>
-            本轮成绩
+            This round
           </button>
           <button className={tab === 'total' ? 'on' : ''} onClick={() => setTab('total')}>
-            累计成绩（{room.rounds} 轮）
+            Overall ({room.rounds})
           </button>
         </div>
         {isHost ? (
           <div className="row">
             <button className="btn primary" disabled={busy} onClick={() => act({ action: 'start' })}>
-              🔁 再来一轮
+              🔁 Play again
             </button>
             <button className="btn" disabled={busy} onClick={() => act({ action: 'reset' })}>
-              ⚙️ 回到大厅调设置
+              ⚙️ Back to lobby
             </button>
-            <button className="btn ghost" disabled={busy} onClick={() => act({ action: 'clearHistory' })}>
-              清空累计
+            <button
+              className="btn ghost"
+              disabled={busy}
+              onClick={() => act({ action: 'clearHistory' })}
+            >
+              Clear overall
             </button>
           </div>
         ) : (
-          <p className="muted">等待房主开始下一轮…</p>
+          <p className="muted">Waiting for the host to start the next round…</p>
         )}
       </div>
 
       <Scoreboard
-        title={tab === 'round' ? '本轮看板' : '累计看板'}
+        title={tab === 'round' ? 'Round dashboard' : 'Overall dashboard'}
         scores={tab === 'round' ? scores.round : scores.total}
         teams={room.teams}
-        hint={room.settings.skipPenalty ? '跳过 -1 分' : '跳过不扣分'}
+        hint={room.settings.skipPenalty ? 'Skip = −1' : 'Skip = 0'}
       />
 
       <div className="card">
-        <h2>答题明细</h2>
+        <h2>Answer log</h2>
         <div className="log-list">
           {log.map((entry, index) => (
             <div key={`${entry.at}-${index}`} className="log-item">
@@ -689,11 +713,11 @@ function Dashboard({
                 <span className="muted">[{entry.categoryName}]</span> {entry.text}
               </span>
               <span className={`res ${entry.result}`}>
-                {entry.result === 'correct' ? '✓ 正确' : '⏭ 跳过'}
+                {entry.result === 'correct' ? '✓ Correct' : '⏭ Skip'}
               </span>
             </div>
           ))}
-          {!log.length && <div className="empty">本轮没有作答记录。</div>}
+          {!log.length && <div className="empty">No answers recorded.</div>}
         </div>
       </div>
     </>

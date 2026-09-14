@@ -30,7 +30,7 @@ type Ctx = { params: Promise<{ code: string }> };
 function fail(error: unknown) {
   const status = error instanceof HttpError ? error.status : 500;
   return NextResponse.json(
-    { error: error instanceof Error ? error.message : '服务器错误' },
+    { error: error instanceof Error ? error.message : 'Server error' },
     { status },
   );
 }
@@ -41,7 +41,7 @@ export async function GET(request: Request, ctx: Ctx) {
     const { code } = await ctx.params;
     const playerId = new URL(request.url).searchParams.get('playerId');
     const room = await getRoom(code);
-    if (!room) throw new HttpError(404, '房间不存在或已过期');
+    if (!room) throw new HttpError(404, 'Room not found or expired');
 
     const before = room.state;
     touch(room, playerId);
@@ -83,19 +83,19 @@ export async function POST(request: Request, ctx: Ctx) {
         case 'setTeam': {
           const player = requirePlayer(draft, playerId ?? '');
           const team = clean(body.team, 16);
-          if (!draft.teams.includes(team)) throw new HttpError(400, '这个组别不存在');
+          if (!draft.teams.includes(team)) throw new HttpError(400, 'That team does not exist');
           player.team = team;
           break;
         }
         case 'setTeams': {
           requireHost(draft, playerId ?? '');
-          if (draft.state === 'playing') throw new HttpError(409, '游戏进行中不能修改组别');
+          if (draft.state === 'playing') throw new HttpError(409, 'Teams cannot be changed mid-round');
           setTeams(draft, Array.isArray(body.teams) ? (body.teams as string[]) : []);
           break;
         }
         case 'settings': {
           requireHost(draft, playerId ?? '');
-          if (draft.state === 'playing') throw new HttpError(409, '游戏进行中不能修改设置');
+          if (draft.state === 'playing') throw new HttpError(409, 'Settings cannot be changed mid-round');
           applySettings(draft, {
             durationSec: body.durationSec as number,
             categoryIds: body.categoryIds as string[],
@@ -138,7 +138,7 @@ export async function POST(request: Request, ctx: Ctx) {
         case 'ping':
           break;
         default:
-          throw new HttpError(400, `未知操作：${action}`);
+          throw new HttpError(400, `Unknown action: ${action}`);
       }
     });
 

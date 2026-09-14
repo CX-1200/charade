@@ -14,7 +14,6 @@ export default function HomePage() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState('');
-
   const [storageWarning, setStorageWarning] = useState(false);
 
   useEffect(() => {
@@ -31,7 +30,7 @@ export default function HomePage() {
 
   async function createRoom() {
     setError('');
-    if (!name.trim()) return setError('请先输入你的名字');
+    if (!name.trim()) return setError('Enter your name first');
     setBusy('create');
     try {
       session.setName(name.trim());
@@ -47,8 +46,8 @@ export default function HomePage() {
   async function joinRoom() {
     setError('');
     const target = code.trim().toUpperCase();
-    if (!name.trim()) return setError('请先输入你的名字');
-    if (target.length !== 4) return setError('房间号是 4 位字符');
+    if (!name.trim()) return setError('Enter your name first');
+    if (target.length !== 4) return setError('A room code is 4 characters');
     setBusy('join');
     try {
       session.setName(name.trim());
@@ -69,90 +68,103 @@ export default function HomePage() {
     <main className="shell">
       <div className="topbar">
         <div className="brand">
-          <span className="logo">🎭</span> 你比划我猜
+          <span className="logo">🎭</span> Charade Party
         </div>
         <Link className="btn sm ghost" href="/questions">
-          📚 题库管理
+          📚 Prompt bank
         </Link>
       </div>
 
       <div className="card">
-        <h1>开一局，大家一起猜</h1>
+        <h1>Start a game, everybody guesses</h1>
         <p className="sub">
-          自建分类题库 → 出题时全部混合 → 多人同一个房间登录 → 倒计时一起作答 → 分组成绩直接上看板。
+          Build your own categories, mix every prompt into one deck, gather your friends in a room,
+          then race a timer you set yourself. Scores land on the dashboard by team.
         </p>
 
         {error && <div className="err">{error}</div>}
         {storageWarning && (
-          <div className="err" style={{ background: 'rgba(245,158,11,0.14)', borderColor: 'rgba(245,158,11,0.4)', color: '#fde68a' }}>
-            ⚠️ 当前用的是内存存储，部署在 Serverless 上时房间可能在实例之间丢失。请在项目里配置
-            Upstash Redis / Vercel KV 的环境变量（见 README）。
+          <div className="notice">
+            ⚠️ Running on the in-memory store. On serverless hosting rooms can vanish between
+            instances — add the Upstash Redis / Vercel KV environment variables (see the README).
           </div>
         )}
 
         <label className="field">
-          <span>你的名字</span>
+          <span>Your name</span>
           <input
             type="text"
             value={name}
             maxLength={20}
-            placeholder="例如：小明"
+            placeholder="e.g. Alex"
             onChange={(e) => setName(e.target.value)}
           />
         </label>
 
         <div className="grid-2">
           <div>
-            <h3>创建新房间</h3>
+            <h3>Create a room</h3>
             <button className="btn primary block" onClick={createRoom} disabled={busy !== null}>
-              {busy === 'create' ? '创建中…' : '🎉 创建房间'}
+              {busy === 'create' ? 'Creating…' : '🎉 Create room'}
             </button>
             <p className="muted" style={{ marginTop: 8 }}>
-              你会成为房主，可以设定时间、分类和组别。
+              You become the host and control the timer, categories and teams.
             </p>
           </div>
 
           <div>
-            <h3>加入已有房间</h3>
+            <h3>Join a room</h3>
             <div className="row" style={{ flexWrap: 'nowrap' }}>
               <input
                 type="text"
                 value={code}
                 maxLength={4}
-                placeholder="房间号"
+                placeholder="CODE"
                 style={{ textTransform: 'uppercase', letterSpacing: 4, fontWeight: 700 }}
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                 onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
               />
               <button className="btn" onClick={joinRoom} disabled={busy !== null}>
-                {busy === 'join' ? '…' : '加入'}
+                {busy === 'join' ? '…' : 'Join'}
               </button>
             </div>
             <p className="muted" style={{ marginTop: 8 }}>
-              把房间号发给朋友，他们打开同一个网址就能进来。
+              Share the code — anyone on the same link can join the lobby.
             </p>
           </div>
         </div>
       </div>
 
       <div className="card">
-        <h2>玩法</h2>
+        <h2>How it works</h2>
         <div className="grid-2">
           <div>
-            <h3>1 · 出题</h3>
-            <p className="muted">在「题库管理」里新建分类（动物、电影、动作…），往每个分类里加题目。</p>
+            <h3>1 · Write prompts</h3>
+            <p className="muted">
+              In the prompt bank, create categories (Animals, Movies, Actions…) and drop prompts into
+              each one.
+            </p>
           </div>
           <div>
-            <h3>2 · 集合</h3>
-            <p className="muted">大家用名字登录进同一个房间，选好自己的组别，房主设定倒计时长度。</p>
+            <h3>2 · Gather</h3>
+            <p className="muted">
+              Everyone signs in with a name, lands in the same lobby and picks a team. The host sets
+              the countdown.
+            </p>
           </div>
           <div>
-            <h3>3 · 作答</h3>
-            <p className="muted">开始后所有人同时抢答，猜对按「正确 ✓」，卡住按「跳过 ⏭」。</p>
+            <h3>3 · Play</h3>
+            <p className="muted">
+              When the clock starts everyone answers at once — hit Correct when they guess it, Skip
+              when you are stuck.
+            </p>
           </div>
           <div>
-            <h3>4 · 看板</h3>
-            <p className="muted">时间到自动结算，各组分数、答题明细一屏看完，可以直接再来一轮。</p>
+            <h3>4 · Dashboard</h3>
+            <p className="muted">
+              Time is up, scores settle automatically. Team standings and every answer on one screen,
+              then run another round.
+            </p>
           </div>
         </div>
       </div>

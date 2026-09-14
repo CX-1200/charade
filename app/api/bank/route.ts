@@ -17,9 +17,9 @@ export async function POST(request: Request) {
       switch (action) {
         case 'addCategory': {
           const name = clean(body.name, 30);
-          if (!name) throw new HttpError(400, '请输入分类名称');
+          if (!name) throw new HttpError(400, 'Please enter a category name');
           if (draft.categories.some((c) => c.name === name)) {
-            throw new HttpError(409, '这个分类已经存在了');
+            throw new HttpError(409, 'That category already exists');
           }
           draft.categories.push({
             id: id('cat'),
@@ -32,9 +32,9 @@ export async function POST(request: Request) {
         }
         case 'renameCategory': {
           const category = draft.categories.find((c) => c.id === body.categoryId);
-          if (!category) throw new HttpError(404, '分类不存在');
+          if (!category) throw new HttpError(404, 'Category not found');
           const name = clean(body.name, 30);
-          if (!name) throw new HttpError(400, '请输入分类名称');
+          if (!name) throw new HttpError(400, 'Please enter a category name');
           category.name = name;
           break;
         }
@@ -44,13 +44,13 @@ export async function POST(request: Request) {
         }
         case 'addItems': {
           const category = draft.categories.find((c) => c.id === body.categoryId);
-          if (!category) throw new HttpError(404, '分类不存在');
+          if (!category) throw new HttpError(404, 'Category not found');
           const raw = Array.isArray(body.texts) ? body.texts : [body.text];
           const texts = raw
             .flatMap((value) => String(value ?? '').split(/[\n,，、]/))
             .map((value) => clean(value, 60))
             .filter(Boolean);
-          if (!texts.length) throw new HttpError(400, '请输入至少一道题目');
+          if (!texts.length) throw new HttpError(400, 'Please enter at least one prompt');
           const existing = new Set(category.items.map((i) => i.text));
           for (const text of texts) {
             if (existing.has(text)) continue;
@@ -62,27 +62,27 @@ export async function POST(request: Request) {
         case 'updateItem': {
           const category = draft.categories.find((c) => c.id === body.categoryId);
           const item = category?.items.find((i) => i.id === body.itemId);
-          if (!item) throw new HttpError(404, '题目不存在');
+          if (!item) throw new HttpError(404, 'Prompt not found');
           const text = clean(body.text, 60);
-          if (!text) throw new HttpError(400, '题目不能为空');
+          if (!text) throw new HttpError(400, 'A prompt cannot be empty');
           item.text = text;
           break;
         }
         case 'deleteItem': {
           const category = draft.categories.find((c) => c.id === body.categoryId);
-          if (!category) throw new HttpError(404, '分类不存在');
+          if (!category) throw new HttpError(404, 'Category not found');
           category.items = category.items.filter((i) => i.id !== body.itemId);
           break;
         }
         default:
-          throw new HttpError(400, `未知操作：${action}`);
+          throw new HttpError(400, `Unknown action: ${action}`);
       }
     });
 
     return NextResponse.json({ bank });
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
-    const message = error instanceof Error ? error.message : '服务器错误';
+    const message = error instanceof Error ? error.message : 'Server error';
     return NextResponse.json({ error: message }, { status });
   }
 }

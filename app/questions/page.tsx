@@ -66,10 +66,10 @@ export default function QuestionsPage() {
     <main className="shell">
       <div className="topbar">
         <div className="brand">
-          <span className="logo">📚</span> 题库管理
+          <span className="logo">📚</span> Prompt bank
         </div>
         <Link className="btn sm ghost" href="/">
-          ← 回首页
+          ← Back home
         </Link>
       </div>
 
@@ -78,8 +78,10 @@ export default function QuestionsPage() {
       <div className="card">
         <div className="spread" style={{ marginBottom: 14 }}>
           <div>
-            <h2 style={{ margin: 0 }}>分类</h2>
-            <p className="muted">共 {bank?.categories.length ?? 0} 个分类 · {total} 道题目</p>
+            <h2 style={{ margin: 0 }}>Categories</h2>
+            <p className="muted">
+              {bank?.categories.length ?? 0} categories · {total} prompts
+            </p>
           </div>
         </div>
 
@@ -88,12 +90,12 @@ export default function QuestionsPage() {
             type="text"
             value={newCategory}
             maxLength={30}
-            placeholder="新分类名称，例如「成语」"
+            placeholder="New category name, e.g. “Sports”"
             onChange={(e) => setNewCategory(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addCategory()}
           />
           <button className="btn primary" onClick={addCategory} disabled={busy}>
-            + 新建
+            + Add
           </button>
         </div>
 
@@ -108,7 +110,6 @@ export default function QuestionsPage() {
                 >
                   <div className="row tight">
                     <span
-                      className="dot"
                       style={{
                         width: 10,
                         height: 10,
@@ -120,25 +121,25 @@ export default function QuestionsPage() {
                     <b>{category.name}</b>
                   </div>
                   <div className="row tight">
-                    <span className="count">{category.items.length} 题</span>
+                    <span className="count">{category.items.length}</span>
                     <button
                       className="btn sm danger"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`删除分类「${category.name}」和它的全部题目？`)) {
+                        if (confirm(`Delete “${category.name}” and all of its prompts?`)) {
                           void mutate({ action: 'deleteCategory', categoryId: category.id });
                         }
                       }}
                     >
-                      删除
+                      Delete
                     </button>
                   </div>
                 </div>
               ))}
               {bank && !bank.categories.length && (
-                <div className="empty">还没有分类，先在上面新建一个吧。</div>
+                <div className="empty">No categories yet — create one above.</div>
               )}
-              {!bank && <div className="empty">加载中…</div>}
+              {!bank && <div className="empty">Loading…</div>}
             </div>
           </div>
 
@@ -146,18 +147,22 @@ export default function QuestionsPage() {
             {active ? (
               <>
                 <h3>
-                  「{active.name}」的题目（{active.items.length}）
+                  Prompts in “{active.name}” ({active.items.length})
                 </h3>
                 <label className="field">
-                  <span>批量添加 · 一行一题，也可以用逗号、顿号分隔</span>
+                  <span>Bulk add — one per line, commas work too</span>
                   <textarea
                     value={draft}
-                    placeholder={'长颈鹿\n打篮球\n泰坦尼克号'}
+                    placeholder={'Giraffe\nPlaying basketball\nTitanic'}
                     onChange={(e) => setDraft(e.target.value)}
                   />
                 </label>
-                <button className="btn primary block" onClick={addItems} disabled={busy || !draft.trim()}>
-                  + 添加到「{active.name}」
+                <button
+                  className="btn primary block"
+                  onClick={addItems}
+                  disabled={busy || !draft.trim()}
+                >
+                  + Add to “{active.name}”
                 </button>
 
                 <div className="log-list" style={{ marginTop: 14 }}>
@@ -166,6 +171,7 @@ export default function QuestionsPage() {
                       <span>{item.text}</span>
                       <button
                         className="btn sm ghost"
+                        title="Remove"
                         onClick={() =>
                           mutate({ action: 'deleteItem', categoryId: active.id, itemId: item.id })
                         }
@@ -174,11 +180,11 @@ export default function QuestionsPage() {
                       </button>
                     </div>
                   ))}
-                  {!active.items.length && <div className="empty">这个分类还没有题目。</div>}
+                  {!active.items.length && <div className="empty">No prompts in here yet.</div>}
                 </div>
               </>
             ) : (
-              <div className="empty">选择左边的一个分类来编辑题目。</div>
+              <div className="empty">Pick a category on the left to edit its prompts.</div>
             )}
           </div>
         </div>
@@ -186,7 +192,8 @@ export default function QuestionsPage() {
 
       <div className="card">
         <p className="muted" style={{ margin: 0 }}>
-          💡 开始游戏时，房主选中的所有分类会被<b>打乱混合成一副牌</b>，每位玩家依次抽题，不会重复。
+          💡 When a round starts, every category the host selected is <b>shuffled into one deck</b>.
+          Players draw from it in turn, so nobody gets the same prompt twice.
         </p>
       </div>
     </main>

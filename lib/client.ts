@@ -7,7 +7,7 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     cache: 'no-store',
   });
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(data?.error || `请求失败 (${res.status})`);
+  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
   return data;
 }
 

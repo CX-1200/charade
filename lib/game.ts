@@ -45,9 +45,9 @@ export function clean(value: unknown, max = 120): string {
 /* ------------------------------------------------------------------ bank */
 
 const SEED: Array<{ name: string; items: string[] }> = [
-  { name: '动物', items: ['长颈鹿', '企鹅', '考拉', '螃蟹', '蝙蝠', '孔雀'] },
-  { name: '电影', items: ['泰坦尼克号', '哈利波特', '功夫熊猫', '流浪地球', '狮子王'] },
-  { name: '动作', items: ['刷牙', '游泳', '打篮球', '弹吉他', '拍照', '睡觉'] },
+  { name: 'Animals', items: ['Giraffe', 'Penguin', 'Koala', 'Crab', 'Bat', 'Peacock'] },
+  { name: 'Movies', items: ['Titanic', 'Harry Potter', 'Kung Fu Panda', 'Jurassic Park', 'The Lion King'] },
+  { name: 'Actions', items: ['Brushing teeth', 'Swimming', 'Playing basketball', 'Playing guitar', 'Taking a photo', 'Sleeping'] },
 ];
 
 function seedBank(): Bank {
@@ -130,7 +130,7 @@ export async function withRoom(
 ): Promise<Room> {
   return withLock(roomKey(code), async () => {
     const room = await getRoom(code);
-    if (!room) throw new HttpError(404, '房间不存在或已过期');
+    if (!room) throw new HttpError(404, 'Room not found or expired');
     settle(room);
     await mutate(room);
     return saveRoom(room);
@@ -141,7 +141,7 @@ export async function createRoom(hostName: string, team: string): Promise<Room> 
   const now = Date.now();
   const host: Player = {
     id: id('p'),
-    name: clean(hostName, 20) || '房主',
+    name: clean(hostName, 20) || 'Host',
     team: team || DEFAULT_TEAMS[0],
     isHost: true,
     joinedAt: now,
@@ -171,7 +171,7 @@ export async function createRoom(hostName: string, team: string): Promise<Room> 
 }
 
 export function joinRoom(room: Room, name: string, team: string): Player {
-  const cleanName = clean(name, 20) || '玩家';
+  const cleanName = clean(name, 20) || 'Player';
   const taken = room.players.some((p) => p.name.toLowerCase() === cleanName.toLowerCase());
   const now = Date.now();
   const player: Player = {
@@ -190,13 +190,13 @@ export function joinRoom(room: Room, name: string, team: string): Player {
 
 export function requirePlayer(room: Room, playerId: string): Player {
   const player = room.players.find((p) => p.id === playerId);
-  if (!player) throw new HttpError(403, '你不在这个房间里，请重新加入');
+  if (!player) throw new HttpError(403, 'You are not in this room — please join again');
   return player;
 }
 
 export function requireHost(room: Room, playerId: string): Player {
   const player = requirePlayer(room, playerId);
-  if (player.id !== room.hostId) throw new HttpError(403, '只有房主可以执行这个操作');
+  if (player.id !== room.hostId) throw new HttpError(403, 'Only the host can do that');
   return player;
 }
 
@@ -230,7 +230,7 @@ export function applySettings(room: Room, patch: Partial<RoomSettings>): void {
 
 export function setTeams(room: Room, teams: string[]): void {
   const next = teams.map((t) => clean(t, 16)).filter(Boolean).slice(0, TEAM_COLORS.length);
-  if (!next.length) throw new HttpError(400, '至少需要一个组别');
+  if (!next.length) throw new HttpError(400, 'You need at least one team');
   room.teams = Array.from(new Set(next));
   for (const player of room.players) {
     if (!room.teams.includes(player.team)) player.team = room.teams[0];
@@ -250,8 +250,8 @@ function drawCard(room: Room): DeckEntry | null {
 }
 
 export function startRound(room: Room, deck: DeckEntry[]): void {
-  if (!deck.length) throw new HttpError(400, '题库是空的，请先添加题目或选择别的分类');
-  if (!room.players.length) throw new HttpError(400, '房间里还没有玩家');
+  if (!deck.length) throw new HttpError(400, 'No prompts available — add some or pick different categories');
+  if (!room.players.length) throw new HttpError(400, 'There are no players in the room yet');
   // Starting while a round is live must not silently drop that round's scores.
   if (room.state === 'playing') finishRound(room);
   const now = Date.now();
@@ -267,10 +267,10 @@ export function startRound(room: Room, deck: DeckEntry[]): void {
 
 export function answer(room: Room, playerId: string, result: AnswerResult): void {
   settle(room);
-  if (room.state !== 'playing') throw new HttpError(409, '本轮还没开始或已经结束');
+  if (room.state !== 'playing') throw new HttpError(409, 'The round is not running');
   const player = requirePlayer(room, playerId);
   const card = room.current[player.id];
-  if (!card) throw new HttpError(409, '没有可以作答的题目');
+  if (!card) throw new HttpError(409, 'No card to answer');
   room.log.push({
     playerId: player.id,
     playerName: player.name,
