@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/admin';
 import { CATEGORY_COLORS, clean, getBank, HttpError, id, updateBank } from '@/lib/game';
 
 export const dynamic = 'force-dynamic';
@@ -11,6 +12,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
+    // The question bank is shared by every room, so only admins may edit it.
+    requireAdmin(body.adminToken);
     const action = String(body.action ?? '');
 
     const bank = await updateBank((draft) => {

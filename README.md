@@ -14,6 +14,7 @@ A multiplayer charades game for the browser, built to deploy on Vercel.
 | Join a room by code | ✅ | ✅ |
 | Join or create a team, change their own name | ✅ | ✅ |
 | **Create a room** | ❌ | ✅ |
+| **Edit the Question Bank** (categories and questions) | ❌ | ✅ |
 | **See and change Host settings** (countdown, categories, teams in play, skip penalty, start/end/reset) | ❌ | ✅ |
 | Remove a player or delete a team | ❌ | ✅ |
 
@@ -56,11 +57,28 @@ Or push the repo to GitHub and import it at [vercel.com/new](https://vercel.com/
 
 ### Set the admin password
 
-```
+`ADMIN_PASSWORD` is an **environment variable** — it is never committed to the repo. Set it in two places:
+
+**Locally** — create a `.env.local` file in the project root (already git-ignored):
+
+```bash
+cp .env.example .env.local
+# then edit .env.local
 ADMIN_PASSWORD=something-only-you-know
 ```
 
-Optionally set `ADMIN_SECRET` too; by default the token signing key is derived from the password, so changing the password invalidates tokens already handed out.
+Restart `npm run dev` afterwards; Next.js reads `.env.local` at boot.
+
+**On Vercel** — the dashboard, or the CLI:
+
+- *Dashboard*: your project → **Settings** → **Environment Variables** → add `ADMIN_PASSWORD`, tick the environments you want (Production / Preview / Development) → **Save**. Then **redeploy** — running deployments keep the values they were built with.
+- *CLI*: `vercel env add ADMIN_PASSWORD production` (repeat per environment), then `vercel --prod`.
+
+Never put the password in `.env` or any committed file. If it leaks, change it and redeploy: every admin token in circulation stops working immediately, because the signing key is derived from the password.
+
+Optionally set `ADMIN_SECRET` too if you want the signing key to be independent of the password.
+
+**Until you set it, the password is `charade`.** Anyone who knows that can create rooms and edit the question bank, so change it before sharing the link.
 
 ### ⚠️ Configure Redis for production (important)
 

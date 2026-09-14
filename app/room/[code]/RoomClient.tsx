@@ -242,7 +242,12 @@ export default function RoomClient({ code }: { code: string }) {
 
       <p className="muted" style={{ marginTop: 20, textAlign: 'center' }}>
         Room {code} · closes in {formatSpan(room.closesInMs)} ·{' '}
-        <Link href="/questions">Question Bank</Link> · <Link href="/">Home</Link>
+        {admin && (
+          <>
+            <Link href="/questions">Question Bank</Link> ·{' '}
+          </>
+        )}
+        <Link href="/">Home</Link>
       </p>
     </main>
   );

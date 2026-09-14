@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { api, post } from '@/lib/client';
+import { api, post, session } from '@/lib/client';
+import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 import type { Bank } from '@/lib/types';
 
 type BankResponse = { bank: Bank };
 
 export default function QuestionsPage() {
+  const [admin, setAdmin] = useAdmin();
   const [bank, setBank] = useState<Bank | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState('');
@@ -34,7 +36,10 @@ export default function QuestionsPage() {
     setError('');
     setBusy(true);
     try {
-      const data = await post<BankResponse>('/api/bank', body);
+      const data = await post<BankResponse>('/api/bank', {
+        ...body,
+        adminToken: session.getAdminToken(),
+      });
       setBank(data.bank);
       return data.bank;
     } catch (e) {
@@ -62,16 +67,45 @@ export default function QuestionsPage() {
     if (ok) setDraft('');
   }
 
+  const header = (
+    <div className="topbar">
+      <div className="brand">
+        <span className="logo">📚</span> Question Bank
+      </div>
+      <Link className="btn sm ghost" href="/">
+        ← Back home
+      </Link>
+    </div>
+  );
+
+  if (admin === null) {
+    return (
+      <main className="shell">
+        {header}
+        <div className="empty">Loading…</div>
+      </main>
+    );
+  }
+
+  if (!admin) {
+    return (
+      <main className="shell">
+        {header}
+        <div className="card">
+          <h1>🔒 Admins only</h1>
+          <p className="sub">
+            The question bank is shared by every room, so only admins can edit it. Unlock admin to
+            add categories and questions.
+          </p>
+          <AdminUnlock onUnlocked={() => setAdmin(true)} />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="shell">
-      <div className="topbar">
-        <div className="brand">
-          <span className="logo">📚</span> Question Bank
-        </div>
-        <Link className="btn sm ghost" href="/">
-          ← Back home
-        </Link>
-      </div>
+      {header}
 
       {error && <div className="err">{error}</div>}
 

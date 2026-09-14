@@ -4,42 +4,22 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { post, session } from '@/lib/client';
+import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
 type CreateResponse = { code: string; playerId: string };
 type JoinResponse = { playerId: string };
-type UnlockResponse = { token: string; expiresAt: number };
 
 export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
-  const [busy, setBusy] = useState<'create' | 'join' | 'unlock' | null>(null);
+  const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState('');
 
-  const [admin, setAdmin] = useState(false);
+  const [admin, setAdmin] = useAdmin();
   const [showUnlock, setShowUnlock] = useState(false);
-  const [password, setPassword] = useState('');
 
-  useEffect(() => {
-    setName(session.getName());
-    setAdmin(!!session.getAdminToken());
-  }, []);
-
-  async function unlock() {
-    setError('');
-    setBusy('unlock');
-    try {
-      const data = await post<UnlockResponse>('/api/admin', { password });
-      session.setAdminToken(data);
-      setAdmin(true);
-      setShowUnlock(false);
-      setPassword('');
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  }
+  useEffect(() => setName(session.getName()), []);
 
   function lock() {
     session.clearAdminToken();
@@ -106,33 +86,28 @@ export default function HomePage() {
         <div className="card" style={{ marginBottom: 16 }}>
           <h3>Unlock admin</h3>
           <p className="muted" style={{ margin: '0 0 12px' }}>
-            Admins create rooms and control the round settings. Everyone else just picks a name and
-            joins.
+            Admins create rooms, edit the question bank and control the round settings. Everyone
+            else just picks a name and joins.
           </p>
-          <div className="row" style={{ flexWrap: 'nowrap' }}>
-            <input
-              type="password"
-              value={password}
-              placeholder="Admin password"
-              autoFocus
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && unlock()}
-            />
-            <button className="btn primary" onClick={unlock} disabled={busy === 'unlock'}>
-              Unlock
-            </button>
-          </div>
+          <AdminUnlock
+            onUnlocked={() => {
+              setAdmin(true);
+              setShowUnlock(false);
+            }}
+          />
         </div>
       )}
 
-      <Link href="/questions" className="cta">
-        <span className="cta-icon">📚</span>
-        <span className="cta-body">
-          <b>Question Bank</b>
-          <span>Create categories and write the questions every round draws from</span>
-        </span>
-        <span className="cta-arrow">→</span>
-      </Link>
+      {admin && (
+        <Link href="/questions" className="cta">
+          <span className="cta-icon">📚</span>
+          <span className="cta-body">
+            <b>Question Bank</b>
+            <span>Create categories and write the questions every round draws from</span>
+          </span>
+          <span className="cta-arrow">→</span>
+        </Link>
+      )}
 
       <div className="card">
         <h1>Start a game, everybody guesses</h1>
