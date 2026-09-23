@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { post, session } from '@/lib/client';
+import { api, post, session } from '@/lib/client';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
 type CreateResponse = { code: string; playerId: string };
@@ -19,7 +19,14 @@ export default function HomePage() {
   const [admin, setAdmin] = useAdmin();
   const [showUnlock, setShowUnlock] = useState(false);
 
-  useEffect(() => setName(session.getName()), []);
+  const [storage, setStorage] = useState<{ durable: boolean } | null>(null);
+
+  useEffect(() => {
+    setName(session.getName());
+    api<{ durable: boolean }>('/api/health')
+      .then(setStorage)
+      .catch(() => undefined);
+  }, []);
 
   function lock() {
     session.clearAdminToken();
@@ -117,6 +124,13 @@ export default function HomePage() {
         </p>
 
         {error && <div className="err">{error}</div>}
+        {admin && storage && !storage.durable && (
+          <div className="notice">
+            ⚠️ This deployment has no shared storage, so rooms live in one server instance only and
+            other players will get &ldquo;no such room&rdquo;. Set the Redis / Vercel KV environment
+            variables and redeploy — see the README.
+          </div>
+        )}
 
         <label className="field">
           <span>Your name</span>

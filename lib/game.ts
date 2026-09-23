@@ -103,6 +103,77 @@ export async function updateBank(mutate: (bank: Bank) => void): Promise<Bank> {
   });
 }
 
+export type BankExport = {
+  format: 'charade-question-bank';
+  version: 1;
+  exportedAt: string;
+  categories: Array<{ name: string; color?: string; items: string[] }>;
+};
+
+export function exportBank(bank: Bank): BankExport {
+  return {
+    format: 'charade-question-bank',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    categories: bank.categories.map((c) => ({
+      name: c.name,
+      color: c.color,
+      items: c.items.map((i) => i.text),
+    })),
+  };
+}
+
+/**
+ * Loads an exported bank back in. Liberal about shape (ids are regenerated, a
+ * category may carry plain strings or `{text}` items) and strict about the
+ * result: names and questions are cleaned and de-duplicated either way.
+ *
+ * `merge` keeps what is already there and tops it up; `replace` swaps the whole
+ * bank for the file.
+ */
+export function importBank(bank: Bank, payload: unknown, mode: 'merge' | 'replace'): number {
+  const source = payload as { categories?: unknown };
+  if (!source || !Array.isArray(source.categories)) {
+    throw new HttpError(400, 'That file is not a question bank export');
+  }
+
+  if (mode === 'replace') bank.categories = [];
+  let added = 0;
+
+  for (const raw of source.categories) {
+    const entry = raw as { name?: unknown; color?: unknown; items?: unknown };
+    const name = clean(entry.name, 30);
+    if (!name) continue;
+
+    let category = bank.categories.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (!category) {
+      category = {
+        id: id('cat'),
+        name,
+        color:
+          typeof entry.color === 'string' && /^#[0-9a-f]{6}$/i.test(entry.color)
+            ? entry.color
+            : CATEGORY_COLORS[bank.categories.length % CATEGORY_COLORS.length],
+        items: [],
+        createdAt: Date.now(),
+      };
+      bank.categories.push(category);
+    }
+
+    const existing = new Set(category.items.map((i) => i.text.toLowerCase()));
+    for (const item of Array.isArray(entry.items) ? entry.items : []) {
+      const text = clean(typeof item === 'string' ? item : (item as { text?: unknown })?.text, 60);
+      if (!text || existing.has(text.toLowerCase())) continue;
+      existing.add(text.toLowerCase());
+      category.items.push({ id: id('q'), text, createdAt: Date.now() });
+      added += 1;
+    }
+  }
+
+  if (!bank.categories.length) throw new HttpError(400, 'That file has no usable categories');
+  return added;
+}
+
 /** Strictly the categories named in `categoryIds` — an empty list means none. */
 function pickCategories(bank: Bank, categoryIds: string[]): Category[] {
   const wanted = new Set(categoryIds);

@@ -86,12 +86,13 @@ Optionally set `ADMIN_SECRET` too if you want the signing key to be independent 
 
 Game state (prompt bank, rooms, scores) goes through a swappable KV layer:
 
-| Driver | When it is used | Notes |
+| Driver | When it is used | Durable? |
 | --- | --- | --- |
-| `memory` | default | Zero config, great for local dev and quick demos. State lives in the Node process: lost on restart, and **not shared between serverless instances**. |
-| `redis` | when REST env vars are present | Every instance shares one copy of the state. This is what you need for real multi-device play. |
+| `redis` | Upstash / Vercel KV REST credentials are present | ✅ Survives restarts **and** is shared by every serverless instance. The production answer. |
+| `file` | no Redis, but the filesystem is writable (local dev, Docker, any long-lived Node host) | ✅ Survives restarts. Single-server only. |
+| `memory` | nothing else is available | ❌ Lost on every restart or redeploy. |
 
-On Vercel with only the memory driver, requests can land on different instances and you will see "room not found" or scores that disagree.
+The driver is picked automatically in that order. **Vercel's filesystem is read-only**, so a Vercel deploy with no Redis lands on `memory` — rooms and the question bank then reset on every cold start, and requests hitting different instances will see "room not found" or scores that disagree. The Question Bank page tells you which driver is live.
 
 Pick either (both have a free tier):
 
@@ -101,6 +102,21 @@ Pick either (both have a free tier):
 - **Vercel KV / Vercel Redis** — create it from the project's Storage tab. It injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`, which this code reads as well.
 
 Redeploy after setting the variables. Hit `/api/health` to confirm which driver is live.
+
+### The question bank is a database, not a fixture
+
+Once an admin builds the bank it stays put: it is stored under its own key and is never re-seeded. The three starter categories only appear when the store is completely empty, and deleting them is permanent — they do not grow back.
+
+Whether that survives a **restart** depends on the driver above. On Vercel that means: configure Redis, or the bank resets on every cold start.
+
+Either way the Question Bank page has **Export JSON** / **Import JSON**:
+
+- *Export* downloads the whole bank as a portable file — a backup, or a way to move a set of questions to another deployment.
+- *Import* asks whether to **replace** the bank with the file or **merge** it in. Merging never duplicates: a category that already exists is topped up, and questions already present are skipped.
+
+The import is liberal about shape (each category's `items` may be plain strings or `{ "text": … }` objects, ids are regenerated) and validates before writing, so a malformed file is rejected without touching what you already have.
+
+Local runs keep the file store in `.data/charade.json` (git-ignored). Point `CHARADE_DATA_DIR` somewhere else to move it, or set `CHARADE_DISABLE_FILE_STORE=1` to force the memory driver.
 
 ## Design
 
@@ -120,9 +136,9 @@ app/
   api/rooms/[code]/route.ts  Room polling + every room action
   api/health/route.ts        Which store driver is active
 lib/
-  game.ts                    Rooms, teams, bank, dealing, scoring, lifetime
+  game.ts                    Rooms, teams, bank, import/export, dealing, scoring
   admin.ts                   Password check and HMAC-signed admin tokens
-  store.ts                   KV store (memory / redis drivers + in-process write lock)
+  store.ts                   KV store (redis / file / memory drivers + in-process write lock)
   serialize.ts               The room view sent to clients (the deck never leaves the server)
   types.ts, ui.ts, client.ts Types, shared constants, fetch helpers
 ```

@@ -25,6 +25,7 @@ import {
   withRoom,
 } from '@/lib/game';
 import { publicRoom, settleAndSerialize } from '@/lib/serialize';
+import { storeDriver, storeIsDurable } from '@/lib/store';
 import type { AnswerResult } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -46,7 +47,12 @@ const ADMIN_ACTIONS = new Set([
 function fail(error: unknown) {
   const status = error instanceof HttpError ? error.status : 500;
   return NextResponse.json(
-    { error: error instanceof Error ? error.message : 'Server error' },
+    {
+      error: error instanceof Error ? error.message : 'Server error',
+      // A 404 on a code the player just used usually means the request landed
+      // on an instance that never saw the room, not that the room is gone.
+      ...(status === 404 ? { storage: { driver: storeDriver, durable: storeIsDurable } } : {}),
+    },
     { status },
   );
 }

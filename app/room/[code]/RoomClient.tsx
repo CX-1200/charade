@@ -3,12 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, formatClock, post, session } from '@/lib/client';
+import { api, formatClock, post, session, type ApiError } from '@/lib/client';
 import { DURATION_PRESETS, MAX_DURATION, MIN_DURATION, teamColor } from '@/lib/ui';
 import type { RoomView } from '@/lib/serialize';
 import type { Bank } from '@/lib/types';
 
 type ViewResponse = RoomView & { playerId?: string | null };
+type Storage = { driver: string; durable: boolean };
+
+const storageOf = (error: ApiError): Storage | null =>
+  (error.body?.storage as Storage | undefined) ?? null;
 type Act = (body: Record<string, unknown>) => Promise<ViewResponse | null>;
 
 const POLL_PLAYING = 900;
@@ -20,6 +24,9 @@ export default function RoomClient({ code }: { code: string }) {
   const [bank, setBank] = useState<Bank | null>(null);
   const [error, setError] = useState('');
   const [closed, setClosed] = useState(false);
+  const [storage, setStorage] = useState<Storage | null>(null);
+  // One 404 can be an unlucky instance hop on a non-shared store; two is real.
+  const missesRef = useRef(0);
   const [joinName, setJoinName] = useState('');
   const [needsJoin, setNeedsJoin] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -44,13 +51,20 @@ export default function RoomClient({ code }: { code: string }) {
       if (pid) query.set('playerId', pid);
       if (token) query.set('adminToken', token);
       const data = await api<RoomView>(`/api/rooms/${code}?${query}`);
+      missesRef.current = 0;
       applyView(data);
       setError('');
     } catch (e) {
-      const err = e as Error & { status?: number };
+      const err = e as ApiError;
       if (err.status === 404) {
-        session.clearPlayerId(code);
-        setClosed(true);
+        const hint = storageOf(err);
+        if (hint) setStorage(hint);
+        missesRef.current += 1;
+        if (missesRef.current >= 2) {
+          session.clearPlayerId(code);
+          setClosed(true);
+        }
+        return; // stay put and retry on the next poll
       }
       setError(err.message);
     }
@@ -94,11 +108,9 @@ export default function RoomClient({ code }: { code: string }) {
         setError('');
         return data;
       } catch (e) {
-        const err = e as Error & { status?: number };
-        if (err.status === 404) {
-          session.clearPlayerId(code);
-          setClosed(true);
-        }
+        const err = e as ApiError;
+        const hint = err.status === 404 ? storageOf(err) : null;
+        if (hint) setStorage(hint);
         setError(err.message);
         return null;
       } finally {
@@ -154,10 +166,25 @@ export default function RoomClient({ code }: { code: string }) {
         <Header code={code} />
         <div className="card">
           <h1>No such room</h1>
-          <p className="sub">
-            Nothing is running under the code {code}. Check the code, or ask an admin to create the
-            room.
-          </p>
+          {storage && !storage.durable ? (
+            <>
+              <p className="sub">
+                This deployment has <b>no shared storage</b>, so each server instance keeps its own
+                copy of the rooms. A room created on one instance is invisible to the next request —
+                which is what just happened to {code}.
+              </p>
+              <div className="notice">
+                Fix: set <code>UPSTASH_REDIS_REST_URL</code> and{' '}
+                <code>UPSTASH_REDIS_REST_TOKEN</code> (or the Vercel KV pair) in the project&rsquo;s
+                environment variables and redeploy. See the README for the steps.
+              </div>
+            </>
+          ) : (
+            <p className="sub">
+              Nothing is running under the code {code}. Check the code, or ask an admin to create
+              the room.
+            </p>
+          )}
           <Link className="btn primary" href="/">
             ← Back home
           </Link>

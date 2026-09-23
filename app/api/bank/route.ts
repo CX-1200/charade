@@ -1,12 +1,30 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
-import { CATEGORY_COLORS, clean, getBank, HttpError, id, updateBank } from '@/lib/game';
+import {
+  CATEGORY_COLORS,
+  clean,
+  exportBank,
+  getBank,
+  HttpError,
+  id,
+  importBank,
+  updateBank,
+} from '@/lib/game';
+import { storeDriver, storeIsDurable } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   const bank = await getBank();
-  return NextResponse.json({ bank });
+  // ?export=1 returns the portable snapshot an admin can save and re-import.
+  if (new URL(request.url).searchParams.get('export')) {
+    return NextResponse.json(exportBank(bank), {
+      headers: {
+        'Content-Disposition': `attachment; filename="charade-question-bank.json"`,
+      },
+    });
+  }
+  return NextResponse.json({ bank, storage: { driver: storeDriver, durable: storeIsDurable } });
 }
 
 export async function POST(request: Request) {
@@ -77,12 +95,16 @@ export async function POST(request: Request) {
           category.items = category.items.filter((i) => i.id !== body.itemId);
           break;
         }
+        case 'import': {
+          importBank(draft, body.data, body.mode === 'replace' ? 'replace' : 'merge');
+          break;
+        }
         default:
           throw new HttpError(400, `Unknown action: ${action}`);
       }
     });
 
-    return NextResponse.json({ bank });
+    return NextResponse.json({ bank, storage: { driver: storeDriver, durable: storeIsDurable } });
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
     const message = error instanceof Error ? error.message : 'Server error';

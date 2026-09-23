@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 import type { Bank } from '@/lib/types';
 
-type BankResponse = { bank: Bank };
+type Storage = { driver: 'redis' | 'file' | 'memory'; durable: boolean };
+type BankResponse = { bank: Bank; storage?: Storage };
 
 export default function QuestionsPage() {
   const [admin, setAdmin] = useAdmin();
@@ -14,8 +15,11 @@ export default function QuestionsPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState('');
   const [draft, setDraft] = useState('');
+  const [storage, setStorage] = useState<Storage | null>(null);
   const [error, setError] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const active = useMemo(
     () => bank?.categories.find((c) => c.id === activeId) ?? bank?.categories[0] ?? null,
@@ -28,7 +32,10 @@ export default function QuestionsPage() {
 
   useEffect(() => {
     api<BankResponse>('/api/bank')
-      .then((data) => setBank(data.bank))
+      .then((data) => {
+        setBank(data.bank);
+        setStorage(data.storage ?? null);
+      })
       .catch((e) => setError((e as Error).message));
   }, []);
 
@@ -41,6 +48,7 @@ export default function QuestionsPage() {
         adminToken: session.getAdminToken(),
       });
       setBank(data.bank);
+      if (data.storage) setStorage(data.storage);
       return data.bank;
     } catch (e) {
       setError((e as Error).message);
@@ -58,6 +66,44 @@ export default function QuestionsPage() {
       setNewCategory('');
       const created = next.categories.find((c) => c.name === name);
       if (created) setActiveId(created.id);
+    }
+  }
+
+  function exportBank() {
+    if (!bank) return;
+    const payload = {
+      format: 'charade-question-bank',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      categories: bank.categories.map((c) => ({
+        name: c.name,
+        color: c.color,
+        items: c.items.map((i) => i.text),
+      })),
+    };
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `charade-question-bank-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importBank(file: File, mode: 'merge' | 'replace') {
+    setNote('');
+    try {
+      const data = JSON.parse(await file.text());
+      const next = await mutate({ action: 'import', data, mode });
+      if (next) {
+        const total = next.categories.reduce((sum, c) => sum + c.items.length, 0);
+        setNote(
+          `Imported — the bank now holds ${next.categories.length} categories and ${total} questions.`,
+        );
+      }
+    } catch (e) {
+      setError(e instanceof SyntaxError ? 'That file is not valid JSON' : (e as Error).message);
     }
   }
 
@@ -108,6 +154,44 @@ export default function QuestionsPage() {
       {header}
 
       {error && <div className="err">{error}</div>}
+      {note && <div className="notice">{note}</div>}
+
+      <div className="card">
+        <div className="spread" style={{ marginBottom: 12 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Backup</h2>
+            <p className="muted">
+              {storage?.durable
+                ? `Saved in ${storage.driver === 'redis' ? 'Redis' : 'a file on the server'} — it survives restarts and redeploys.`
+                : 'Stored in memory on this server: a restart or redeploy wipes it. Export a copy, and see the README on configuring Redis.'}
+            </p>
+          </div>
+        </div>
+        <div className="row tight">
+          <button className="btn sm" onClick={exportBank} disabled={!bank}>
+            ⬇ Export JSON
+          </button>
+          <button className="btn sm" onClick={() => fileInput.current?.click()} disabled={busy}>
+            ⬆ Import JSON
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              const replace = confirm(
+                'OK — replace the whole bank with this file.\n\n' +
+                  'Cancel — merge it into what is already here.',
+              );
+              void importBank(file, replace ? 'replace' : 'merge');
+            }}
+          />
+        </div>
+      </div>
 
       <div className="card">
         <div className="spread" style={{ marginBottom: 14 }}>

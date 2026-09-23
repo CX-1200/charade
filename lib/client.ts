@@ -1,5 +1,8 @@
 'use client';
 
+/** An error thrown by `api`, carrying the status and the server's payload. */
+export type ApiError = Error & { status?: number; body?: Record<string, unknown> };
+
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -8,10 +11,10 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) {
-    const error = new Error(data?.error || `Request failed (${res.status})`) as Error & {
-      status?: number;
-    };
+    const error: ApiError = new Error(data?.error || `Request failed (${res.status})`);
     error.status = res.status;
+    // Routes attach diagnostics (e.g. which store driver is live) — keep them.
+    error.body = data as Record<string, unknown>;
     throw error;
   }
   return data;
