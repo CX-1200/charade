@@ -245,7 +245,7 @@ export default function RoomClient({ code }: { code: string }) {
       />
       {error && <div className="err">{error}</div>}
 
-      {!you.team ? (
+      {!you.team && !admin ? (
         <TeamGate view={view} busy={busy} act={act} />
       ) : (
         <>
@@ -259,9 +259,12 @@ export default function RoomClient({ code }: { code: string }) {
               admin={admin}
             />
           )}
-          {room.state === 'playing' && (
-            <Play view={view} remainingMs={remainingMs} busy={busy} act={act} admin={admin} />
-          )}
+          {room.state === 'playing' &&
+            (view.you?.spectating ? (
+              <LiveDashboard view={view} remainingMs={remainingMs} busy={busy} act={act} />
+            ) : (
+              <Play view={view} remainingMs={remainingMs} busy={busy} act={act} admin={admin} />
+            ))}
           {room.state === 'finished' && <Dashboard view={view} admin={admin} busy={busy} act={act} />}
         </>
       )}
@@ -271,6 +274,7 @@ export default function RoomClient({ code }: { code: string }) {
         {admin && (
           <>
             <Link href="/questions">Question Bank</Link> ·{' '}
+            <Link href="/rooms">Manage rooms</Link> ·{' '}
           </>
         )}
         <Link href="/">Home</Link>
@@ -337,7 +341,7 @@ function TeamGate({ view, busy, act }: { view: RoomView; busy: boolean; act: Act
       <h1>{first ? 'Create the first team' : 'Pick your team'}</h1>
       <p className="sub">
         {first
-          ? 'This room has no teams yet. Name one and you will be put straight into it.'
+          ? 'Nobody has made a team yet. Name one and you are in it — players build the teams, the admin just runs the round.'
           : 'Join one of the teams below, or start a new one of your own.'}
       </p>
 
@@ -535,8 +539,15 @@ function Lobby({
           )}
         </div>
 
+        {view.you?.spectating && (
+          <div className="notice" style={{ marginBottom: 16 }}>
+            👁 <b>You are watching, not playing.</b> Stay out of the teams and your screen becomes a
+            live scoreboard once the round starts. Join a team below if you would rather play.
+          </div>
+        )}
+
         <div className="section">
-          <h3>Your team</h3>
+          <h3>{view.you?.team ? 'Your team' : 'Teams'}</h3>
           <div className="row">
             {room.teams.map((team) => (
               <button
@@ -581,7 +592,7 @@ function Lobby({
                 {player.name}
                 {player.isHost && ' 👑'}
                 <span style={{ color: teamColor(room.teams, player.team), fontSize: 12 }}>
-                  {player.team || 'no team'}
+                  {player.team || (player.id === room.hostId ? 'watching' : 'no team')}
                 </span>
                 {admin && player.id !== view.you?.id && (
                   <button
@@ -925,6 +936,101 @@ function Play({
         teams={room.teams}
         hint={`${room.answered} answered this round`}
       />
+    </>
+  );
+}
+
+/** What a spectating admin sees while the round runs: scores, live. */
+function LiveDashboard({
+  view,
+  remainingMs,
+  busy,
+  act,
+}: {
+  view: RoomView;
+  remainingMs: number;
+  busy: boolean;
+  act: Act;
+}) {
+  const { room, scores, log } = view;
+  const total = room.settings.durationSec * 1000;
+  const pct = Math.max(0, Math.min(100, (remainingMs / total) * 100));
+  const low = remainingMs <= 10_000;
+  const playingTeams = scores.round.filter((s) => room.settings.activeTeams.includes(s.team));
+  const best = Math.max(0, ...playingTeams.map((s) => s.score));
+  const answering = room.players.filter(
+    (p) => p.team && room.settings.activeTeams.includes(p.team),
+  ).length;
+
+  return (
+    <>
+      <div className="card">
+        <div className="spread">
+          <div>
+            <div className={`timer${low ? ' low' : ''}`}>{formatClock(remainingMs)}</div>
+            <p className="muted" style={{ margin: '6px 0 0' }}>
+              👁 Live scoreboard · {answering} playing · {room.answered} answered
+            </p>
+          </div>
+          <button className="btn sm danger" disabled={busy} onClick={() => act({ action: 'finish' })}>
+            End now
+          </button>
+        </div>
+        <div className="progress">
+          <i style={{ width: `${pct}%` }} />
+        </div>
+
+        <div className="live-grid">
+          {playingTeams.map((team) => (
+            <div
+              key={team.team}
+              className={`live-card${team.score === best && best > 0 ? ' lead' : ''}`}
+            >
+              <div className="team">
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background:
+                      team.score === best && best > 0
+                        ? 'var(--cream)'
+                        : teamColor(room.teams, team.team),
+                  }}
+                />
+                {team.team}
+              </div>
+              <div className="num">{team.correct}</div>
+              <div className="detail">
+                correct{room.settings.skipPenalty ? ` · ${team.score} pts` : ''} · {team.skipped}{' '}
+                skipped
+              </div>
+              <div className="detail">
+                {team.players.length} {team.players.length === 1 ? 'player' : 'players'}
+              </div>
+            </div>
+          ))}
+          {!playingTeams.length && <div className="empty">No teams are playing this round.</div>}
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>As it happens</h2>
+        <div className="ticker">
+          {log.map((entry, index) => (
+            <div key={`${entry.at}-${index}`} className="ticker-row">
+              <span>
+                <b style={{ color: teamColor(room.teams, entry.team) }}>{entry.playerName}</b>{' '}
+                {entry.text}
+              </span>
+              <span className={`res ${entry.result}`}>
+                {entry.result === 'correct' ? '✓' : '⏭'}
+              </span>
+            </div>
+          ))}
+          {!log.length && <div className="empty">Waiting for the first answer…</div>}
+        </div>
+      </div>
     </>
   );
 }

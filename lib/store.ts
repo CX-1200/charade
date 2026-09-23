@@ -180,11 +180,84 @@ export async function kvDel(key: string): Promise<void> {
   memory.delete(key);
 }
 
+/* ------------------------------------------------------------ set members */
+
+/**
+ * Small unordered set. Backed by a real Redis set so adding is one atomic
+ * command with no read-modify-write — it runs on every room save.
+ */
+export async function kvSetAdd(key: string, member: string): Promise<void> {
+  if (storeDriver === 'redis') {
+    await redisCommand(['SADD', key, member]);
+    return;
+  }
+  const current = new Set((await kvGet<string[]>(key)) ?? []);
+  if (current.has(member)) return;
+  current.add(member);
+  await kvSet(key, [...current]);
+}
+
+export async function kvSetRemove(key: string, member: string): Promise<void> {
+  if (storeDriver === 'redis') {
+    await redisCommand(['SREM', key, member]);
+    return;
+  }
+  const current = ((await kvGet<string[]>(key)) ?? []).filter((m) => m !== member);
+  await kvSet(key, current);
+}
+
+export async function kvSetMembers(key: string): Promise<string[]> {
+  if (storeDriver === 'redis') {
+    return ((await redisCommand(['SMEMBERS', key])) as string[] | null) ?? [];
+  }
+  return (await kvGet<string[]>(key)) ?? [];
+}
+
+/* ------------------------------------------------------------------ locks */
+
+const LOCK_TTL_SECONDS = 10;
+const LOCK_RETRY_MS = 25;
+const LOCK_MAX_WAIT_MS = 10_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Cross-instance lock. The in-process lock below only orders requests inside
+ * one Node process; on serverless there are many, so without this two players
+ * answering at the same moment can read the same room and write back over each
+ * other — one answer silently vanishes. With 50 players that is constant.
+ */
+async function withRedisLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const lockKey = `${key}:lock`;
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+
+  for (;;) {
+    const acquired = await redisCommand(['SET', lockKey, token, 'NX', 'EX', LOCK_TTL_SECONDS]);
+    if (acquired) break;
+    if (Date.now() > deadline) {
+      throw new Error('Timed out waiting for the room lock — please try again');
+    }
+    await sleep(LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS));
+  }
+
+  try {
+    return await fn();
+  } finally {
+    // Only clear our own lock: a lock we already lost to expiry belongs to
+    // someone else now, and deleting it would let a third writer in.
+    const held = (await redisCommand(['GET', lockKey])) as string | null;
+    if (held === token) await redisCommand(['DEL', lockKey]);
+  }
+}
+
 /**
  * Serialises read-modify-write cycles for one key inside this process so two
  * concurrent taps on the same room cannot clobber each other's update.
  */
 export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  // Order within this process first, then across instances when shared.
+  const body = storeDriver === 'redis' ? () => withRedisLock(key, fn) : fn;
   const previous = locks.get(key) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
@@ -194,7 +267,7 @@ export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T>
   locks.set(key, chained);
   await previous.catch(() => {});
   try {
-    return await fn();
+    return await body();
   } finally {
     release();
     if (locks.get(key) === chained) locks.delete(key);

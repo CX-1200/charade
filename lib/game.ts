@@ -1,20 +1,19 @@
-import { kvGet, kvSet, withLock } from './store';
+import { kvDel, kvGet, kvSet, kvSetAdd, kvSetMembers, kvSetRemove, withLock } from './store';
 import { HttpError } from './errors';
 import { makeRoom, roomCode, seedBank, settle } from './rules';
 import type { Bank, Room } from './types';
 
-/** Pure game rules live in ./rules so the browser can run them too. */
+/** Pure game rules live in ./rules so they stay independent of storage. */
 export * from './rules';
 
 const BANK_KEY = 'charade:bank';
-/**
- * Rooms have no lifetime of their own: they survive an empty lobby and are
- * reusable the next day. This TTL is storage hygiene only — it is refreshed on
- * every write, so a room disappears solely after a month of total silence.
- */
-const ROOM_TTL_SECONDS = 60 * 60 * 24 * 30;
+/** Index of every open room, so an admin can see and close them. */
+const ROOM_INDEX_KEY = 'charade:rooms';
 
 const roomKey = (code: string) => `charade:room:${code.toUpperCase()}`;
+
+/** Rooms this process has already put in the index — saves a write per save. */
+const indexed = new Set<string>();
 
 /* ------------------------------------------------------------------ bank */
 
@@ -43,10 +42,43 @@ export async function getRoom(code: string): Promise<Room | null> {
   return kvGet<Room>(roomKey(code));
 }
 
+/**
+ * Rooms are stored with no expiry on purpose: an admin closing one from Manage
+ * rooms is the only thing that ever removes a room. Nothing here times out, and
+ * an empty room keeps its code, teams and scores until somebody closes it.
+ */
 export async function saveRoom(room: Room): Promise<Room> {
   room.updatedAt = Date.now();
-  await kvSet(roomKey(room.code), room, ROOM_TTL_SECONDS);
+  await kvSet(roomKey(room.code), room);
+  // Idempotent, and it heals the index for rooms this instance has not seen —
+  // but only once per room per process, since saves are the hot path.
+  if (!indexed.has(room.code)) {
+    await kvSetAdd(ROOM_INDEX_KEY, room.code);
+    indexed.add(room.code);
+  }
   return room;
+}
+
+/** The one and only way a room is destroyed. */
+export async function closeRoom(code: string): Promise<boolean> {
+  const upper = code.toUpperCase();
+  const existed = !!(await getRoom(upper));
+  await kvDel(roomKey(upper));
+  await kvSetRemove(ROOM_INDEX_KEY, upper);
+  indexed.delete(upper);
+  return existed;
+}
+
+export async function listRooms(): Promise<Room[]> {
+  const codes = await kvSetMembers(ROOM_INDEX_KEY);
+  const rooms = await Promise.all(codes.map((code) => getRoom(code)));
+  const open: Room[] = [];
+  for (const [index, room] of rooms.entries()) {
+    // A code in the index with no room behind it is stale — tidy it away.
+    if (room) open.push(room);
+    else await kvSetRemove(ROOM_INDEX_KEY, codes[index]);
+  }
+  return open.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function withRoom(
@@ -58,7 +90,6 @@ export async function withRoom(
     if (!room) throw new HttpError(404, 'Room not found');
     settle(room);
     await mutate(room);
-    // An empty room stays put — the same code works when people come back.
     return saveRoom(room);
   });
 }

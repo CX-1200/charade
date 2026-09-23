@@ -106,14 +106,24 @@ export default function HomePage() {
       )}
 
       {admin && (
-        <Link href="/questions" className="cta">
-          <span className="cta-icon">📚</span>
-          <span className="cta-body">
-            <b>Question Bank</b>
-            <span>Create categories and write the questions every round draws from</span>
-          </span>
-          <span className="cta-arrow">→</span>
-        </Link>
+        <>
+          <Link href="/questions" className="cta">
+            <span className="cta-icon">📚</span>
+            <span className="cta-body">
+              <b>Question Bank</b>
+              <span>Create categories and write the questions every round draws from</span>
+            </span>
+            <span className="cta-arrow">→</span>
+          </Link>
+          <Link href="/rooms" className="cta">
+            <span className="cta-icon">🗂</span>
+            <span className="cta-body">
+              <b>Manage rooms</b>
+              <span>See every open room and close the ones you are done with</span>
+            </span>
+            <span className="cta-arrow">→</span>
+          </Link>
+        </>
       )}
 
       <div className="card">
@@ -179,7 +189,7 @@ export default function HomePage() {
             </button>
             <p className="muted" style={{ marginTop: 8 }}>
               {admin
-                ? 'You will control the timer, categories and teams.'
+                ? 'You run the round and can watch instead of playing — the players make the teams.'
                 : 'Admins only — unlock admin at the top right.'}
             </p>
           </div>

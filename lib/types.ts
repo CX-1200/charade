@@ -60,10 +60,15 @@ export type RoomSettings = {
   skipPenalty: boolean;
 };
 
+/** Per-team totals. Kept incrementally so scoring never depends on the log. */
+export type Tally = Record<string, { correct: number; skipped: number }>;
+
 export type Round = {
   index: number;
   startedAt: number;
   endedAt: number;
+  tally: Tally;
+  /** Display only — trimmed to the most recent answers. */
   log: LogEntry[];
 };
 
@@ -76,6 +81,8 @@ export type Room = {
   teams: string[];
   deck: DeckEntry[];
   cursor: number;
+  /** Authoritative score source for the round in progress. */
+  tally: Tally;
   /** playerId -> the card that player is currently holding (null = deck exhausted). */
   current: Record<string, DeckEntry | null>;
   log: LogEntry[];

@@ -17,6 +17,20 @@ A multiplayer charades game for the browser, built to deploy on Vercel.
 | **Edit the Question Bank** (categories and questions) | ❌ | ✅ |
 | **See and change Host settings** (countdown, categories, teams in play, skip penalty, start/end/reset) | ❌ | ✅ |
 | Remove a player or delete a team | ❌ | ✅ |
+| **Watch instead of playing** — a live scoreboard while the round runs | ❌ | ✅ |
+| **Manage rooms** — see every open room and close it | ❌ | ✅ |
+
+### Admins watch, players play
+
+An admin never has to join a team. Create a room and you are a spectator: the lobby shows the host settings, and the moment the round starts your screen becomes a **live scoreboard** — a card per team counting correct answers as they land, plus a running feed of who just answered what. Join a team from the lobby if you would rather play.
+
+Teams belong to the players. Creating a room no longer asks anyone to name one; the first player in is asked to create the first team, and everyone after can join it or start their own. A round will not start until at least one team exists with somebody on it.
+
+### Manage rooms
+
+`/rooms` lists every open room with its state, how many people are in it, its teams and rounds played, and closes any of them.
+
+**Closing a room there is the only thing in this app that destroys a room.** Nothing expires: rooms carry no lifetime, no idle timeout and no storage TTL, and an empty room keeps its code, teams and scores until an admin closes it. If everyone leaves and comes back an hour later, the same code still works and the first person back becomes host.
 
 Admin is unlocked on the home page: hit `🔒 Admin`, type the password, and the browser keeps an HMAC-signed token for 12 hours. The server checks that token on every privileged action, so hiding the panel is not the security boundary. Set `ADMIN_PASSWORD` before sharing the link — it defaults to `charade`.
 
@@ -32,11 +46,25 @@ Admin is unlocked on the home page: hit `🔒 Admin`, type the password, and the
 
 Scoring: correct `+1`, skip `0` (the admin can turn on "skips cost 1 point"). Points go to the player's **team**.
 
-## Room lifetime
+## Scale
 
-Rooms do not close themselves. They survive an empty lobby, so the same 4-character code still works when people drift away and come back — the first person to rejoin an empty room becomes its host. `Leave game` in the room header takes you back to the home page at any point (lobby, mid-round or on the dashboard) without affecting anyone else.
+Sized for about **50 players plus 10 judges in one room**, and tested at that size against two server instances sharing one Redis — the shape Vercel actually runs, where consecutive requests from the same person land on different instances.
 
-Stored rooms carry a 30-day TTL that is refreshed on every write. That is storage hygiene, not a game rule: a room only disappears after a full month with nobody touching it.
+Three things make that work:
+
+- **A cross-instance lock.** Every write to a room takes a Redis lock first. Without it two players answering at the same moment read the same room and write back over each other, and one answer silently disappears. The in-process lock alone cannot see other instances.
+- **Scores are counters, not a replay.** Each answer increments a per-team tally, so scoring is exact however long a round runs. The answer log is display-only and capped, which keeps the room document small (16 KB after 600 answers) instead of growing without bound.
+- **Polls do not write.** Reading a room persists nothing. Presence is refreshed at most every 15 seconds and never during a round, so the hot path is one read.
+
+Measured at 50 players + 10 judges (see the numbers in the commit history):
+
+| | |
+| --- | --- |
+| Human pace (~5 answers/s) | answer p95 **74 ms**, judge poll p95 **25 ms** |
+| Sustained burst (52 answers/s) | 600/600 answers counted, none lost, none rejected |
+| Room document | 16 KB with 600 answers recorded |
+
+One thing to watch: a busy game is chatty with Redis — roughly 2,000 commands for a 30-second round with 60 people. Upstash's free tier allows 10,000 commands a day, so a few real games will exhaust it. Move to a paid plan if you run this regularly.
 
 ## Run locally
 

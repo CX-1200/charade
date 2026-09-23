@@ -2,6 +2,7 @@ import { HttpError } from './errors';
 import { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
 import type {
   AnswerResult,
+  Tally,
   Bank,
   Category,
   DeckEntry,
@@ -13,6 +14,13 @@ import type {
 
 export { HttpError };
 export { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
+
+/**
+ * A round with 50 players generates thousands of answers. The room document is
+ * read and written on every request, so the log is display-only and capped;
+ * scores come from `tally`, which is exact however many answers there are.
+ */
+export const MAX_LOG_ENTRIES = 200;
 
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const MAX_TEAMS = TEAM_COLORS.length;
@@ -204,6 +212,7 @@ export function makeRoom(code: string, hostName: string, categoryIds: string[]):
     teams: [],
     deck: [],
     cursor: 0,
+    tally: {},
     current: {},
     log: [],
     history: [],
@@ -262,6 +271,12 @@ export function renamePlayer(room: Room, playerId: string, name: string): void {
   );
   if (taken) throw new HttpError(409, 'Somebody in this room already uses that name');
   player.name = next;
+}
+
+function bump(tally: Tally, team: string, result: AnswerResult): void {
+  const row = (tally[team] ??= { correct: 0, skipped: 0 });
+  if (result === 'correct') row.correct += 1;
+  else row.skipped += 1;
 }
 
 /* ----------------------------------------------------------------- teams */
@@ -344,6 +359,9 @@ export function startRound(room: Room, deck: DeckEntry[]): void {
   if (!deck.length) {
     throw new HttpError(400, 'No questions available — add some or select more categories');
   }
+  if (!room.teams.length) {
+    throw new HttpError(400, 'No teams yet — a player needs to create one before you can start');
+  }
   if (!room.settings.activeTeams.length) {
     throw new HttpError(400, 'Select at least one team to play this round');
   }
@@ -357,6 +375,7 @@ export function startRound(room: Room, deck: DeckEntry[]): void {
   room.cursor = 0;
   room.current = {};
   room.log = [];
+  room.tally = {};
   room.state = 'playing';
   room.startedAt = now;
   room.endsAt = now + room.settings.durationSec * 1000;
@@ -367,11 +386,14 @@ export function answer(room: Room, playerId: string, result: AnswerResult): void
   settle(room);
   if (room.state !== 'playing') throw new HttpError(409, 'The round is not running');
   const player = requirePlayer(room, playerId);
+  if (!player.team) throw new HttpError(403, 'You are watching this round, not playing');
   if (!isTeamActive(room, player.team)) {
     throw new HttpError(403, 'Your team is sitting this round out');
   }
   const card = room.current[player.id];
   if (!card) throw new HttpError(409, 'No card to answer');
+
+  bump(room.tally, player.team, result);
   room.log.push({
     playerId: player.id,
     playerName: player.name,
@@ -381,6 +403,9 @@ export function answer(room: Room, playerId: string, result: AnswerResult): void
     result,
     at: Date.now(),
   });
+  // Bound the document: the log is a feed, the tally is the score.
+  if (room.log.length > MAX_LOG_ENTRIES) room.log = room.log.slice(-MAX_LOG_ENTRIES);
+
   room.current[player.id] = drawCard(room);
   player.lastSeen = Date.now();
 }
@@ -398,6 +423,7 @@ export function finishRound(room: Room): void {
     index: room.history.length + 1,
     startedAt: room.startedAt ?? Date.now(),
     endedAt: Date.now(),
+    tally: structuredClone(room.tally),
     log: [...room.log],
   });
   room.state = 'finished';
@@ -411,6 +437,7 @@ export function resetRoom(room: Room): void {
   room.cursor = 0;
   room.current = {};
   room.log = [];
+  room.tally = {};
   room.startedAt = null;
   room.endsAt = null;
 }
@@ -421,10 +448,7 @@ export function clearHistory(room: Room): void {
 
 /* --------------------------------------------------------------- scoring */
 
-export function scoreLog(
-  room: Room,
-  log: Array<{ team: string; result: AnswerResult; playerName: string }>,
-): TeamScore[] {
+function emptyTable(room: Room): Map<string, TeamScore> {
   const table = new Map<string, TeamScore>();
   for (const team of room.teams) {
     table.set(team, { team, correct: 0, skipped: 0, score: 0, players: [] });
@@ -433,28 +457,36 @@ export function scoreLog(
     const row = player.team ? table.get(player.team) : undefined;
     if (row && !row.players.includes(player.name)) row.players.push(player.name);
   }
-  for (const entry of log) {
-    let row = table.get(entry.team);
-    if (!row) {
-      row = { team: entry.team, correct: 0, skipped: 0, score: 0, players: [] };
-      table.set(entry.team, row);
+  return table;
+}
+
+/** Scores come from tallies, so they stay exact no matter how long a round runs. */
+function scoreTallies(room: Room, tallies: Tally[]): TeamScore[] {
+  const table = emptyTable(room);
+  for (const tally of tallies) {
+    for (const [team, counts] of Object.entries(tally)) {
+      let row = table.get(team);
+      if (!row) {
+        // A team that has since been deleted still keeps the points it scored.
+        row = { team, correct: 0, skipped: 0, score: 0, players: [] };
+        table.set(team, row);
+      }
+      row.correct += counts.correct;
+      row.skipped += counts.skipped;
     }
-    if (entry.result === 'correct') {
-      row.correct += 1;
-      row.score += 1;
-    } else {
-      row.skipped += 1;
-      if (room.settings.skipPenalty) row.score -= 1;
-    }
+  }
+  for (const row of table.values()) {
+    row.score = row.correct - (room.settings.skipPenalty ? row.skipped : 0);
   }
   return [...table.values()].sort((a, b) => b.score - a.score || b.correct - a.correct);
 }
 
 export function roundScores(room: Room): TeamScore[] {
-  return scoreLog(room, room.log);
+  return scoreTallies(room, [room.tally]);
 }
 
 export function totalScores(room: Room): TeamScore[] {
-  const all = [...room.history.flatMap((r) => r.log), ...(room.state === 'playing' ? room.log : [])];
-  return scoreLog(room, all);
+  const tallies = room.history.map((r) => r.tally);
+  if (room.state === 'playing') tallies.push(room.tally);
+  return scoreTallies(room, tallies);
 }

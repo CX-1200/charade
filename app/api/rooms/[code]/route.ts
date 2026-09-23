@@ -18,7 +18,7 @@ import {
   renamePlayer,
   requirePlayer,
   resetRoom,
-  saveRoom,
+
   setTeamActive,
   startRound,
   touch,
@@ -29,6 +29,14 @@ import { storeDriver, storeIsDurable } from '@/lib/store';
 import type { AnswerResult } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Presence only drives an online dot, so re-writing the room on every poll is
+ * pure cost — with 60 people in a room that is ~60 writes a second. Refresh a
+ * player's timestamp at most this often, and never during a round: answering
+ * already refreshes it, and a write here would fight the answers for the lock.
+ */
+const PRESENCE_WRITE_MS = 15_000;
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -65,16 +73,27 @@ export async function GET(request: Request, ctx: Ctx) {
     const playerId = params.get('playerId');
     const admin = isAdmin(params.get('adminToken'));
 
-    const room = await getRoom(code);
+    let room = await getRoom(code);
     if (!room) throw new HttpError(404, 'Room not found');
 
-    const before = room.state;
-    touch(room, playerId);
-    const bank = await getBank();
-    const view = settleAndSerialize(room, playerId, { admin, bank });
-    // Presence + auto-finish are cheap writes; only persist when something moved.
-    if (playerId || before !== room.state) await saveRoom(room);
-    return NextResponse.json(view);
+    const me = playerId ? room.players.find((p) => p.id === playerId) : null;
+    const presenceStale =
+      !!me && room.state !== 'playing' && Date.now() - me.lastSeen > PRESENCE_WRITE_MS;
+    const clockRanOut = room.state === 'playing' && !!room.endsAt && Date.now() >= room.endsAt;
+
+    // Any write goes through withRoom, which holds the room lock. Writing here
+    // unlocked would read-modify-write the whole document and silently drop
+    // answers that landed in between — at 50 players that happens constantly.
+    if (presenceStale || clockRanOut) {
+      room = await withRoom(code, (draft) => touch(draft, playerId));
+    } else {
+      // Read-only response: freshen the view in memory, persist nothing.
+      touch(room, playerId);
+    }
+
+    // The bank is only needed for the admin's category counts in the lobby.
+    const bank = admin && room.state === 'lobby' ? await getBank() : null;
+    return NextResponse.json(settleAndSerialize(room, playerId, { admin, bank }));
   } catch (error) {
     return fail(error);
   }
@@ -178,7 +197,7 @@ export async function POST(request: Request, ctx: Ctx) {
     });
 
     const viewer = joinedId ?? playerId;
-    const bank = await getBank();
+    const bank = admin && room.state === 'lobby' ? await getBank() : null;
     return NextResponse.json({
       ...publicRoom(room, viewer, { admin, bank }),
       playerId: viewer,

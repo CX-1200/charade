@@ -40,6 +40,8 @@ export function publicRoom(
       team: you.team,
       isHost: you.id === room.hostId,
       playing: !!you.team && room.settings.activeTeams.includes(you.team),
+      /** An admin with no team watches instead of answering. */
+      spectating: !you.team && !!opts.admin,
     },
     card: you ? room.current[you.id] ?? null : null,
     myStats: you
