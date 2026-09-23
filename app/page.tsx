@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
+import { isDemoMode, setDemoMode } from '@/lib/demo';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
 type CreateResponse = { code: string; playerId: string };
@@ -20,13 +21,20 @@ export default function HomePage() {
   const [showUnlock, setShowUnlock] = useState(false);
 
   const [storage, setStorage] = useState<{ durable: boolean } | null>(null);
+  const [demo, setDemo] = useState(false);
 
   useEffect(() => {
     setName(session.getName());
+    setDemo(isDemoMode());
     api<{ durable: boolean }>('/api/health')
       .then(setStorage)
       .catch(() => undefined);
   }, []);
+
+  function toggleDemo(on: boolean) {
+    setDemoMode(on);
+    setDemo(on);
+  }
 
   function lock() {
     session.clearAdminToken();
@@ -124,12 +132,31 @@ export default function HomePage() {
         </p>
 
         {error && <div className="err">{error}</div>}
-        {admin && storage && !storage.durable && (
+        {demo ? (
           <div className="notice">
-            ⚠️ This deployment has no shared storage, so rooms live in one server instance only and
-            other players will get &ldquo;no such room&rdquo;.{' '}
-            <Link href="/setup">Fix it in storage setup →</Link>
+            🎬 <b>Demo mode is on.</b> The whole game runs in this browser — no server, no setup,
+            and nothing to go wrong on stage. Other devices cannot join a demo room.{' '}
+            <button className="btn sm ghost" onClick={() => toggleDemo(false)}>
+              Turn off
+            </button>
           </div>
+        ) : (
+          admin &&
+          storage &&
+          !storage.durable && (
+            <div className="notice">
+              ⚠️ This deployment has no shared storage, so rooms live in one server instance only
+              and other players will get &ldquo;no such room&rdquo;.
+              <div className="row tight" style={{ marginTop: 10 }}>
+                <button className="btn sm primary" onClick={() => toggleDemo(true)}>
+                  🎬 Use demo mode
+                </button>
+                <Link className="btn sm" href="/setup">
+                  Fix it properly →
+                </Link>
+              </div>
+            </div>
+          )
         )}
 
         <label className="field">

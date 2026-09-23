@@ -1,9 +1,27 @@
 'use client';
 
+import { handleDemoRequest, isDemoMode } from './demo';
+
 /** An error thrown by `api`, carrying the status and the server's payload. */
 export type ApiError = Error & { status?: number; body?: Record<string, unknown> };
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  // Demo mode answers the room and bank routes locally; everything else still
+  // goes to the server.
+  if (isDemoMode()) {
+    const local = handleDemoRequest(url, init);
+    if (local) {
+      const data = local.data as T & { error?: string };
+      if (local.status >= 400) {
+        const error: ApiError = new Error(data?.error || 'Demo mode error');
+        error.status = local.status;
+        error.body = data as Record<string, unknown>;
+        throw error;
+      }
+      return data;
+    }
+  }
+
   const res = await fetch(url, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },

@@ -1,4 +1,4 @@
-import { countPrompts, roundScores, settle, totalScores } from './game';
+import { countPrompts, roundScores, settle, totalScores } from './rules';
 import type { Bank, Room } from './types';
 
 /** Everything the client is allowed to see — note the deck never leaves the server. */

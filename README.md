@@ -94,6 +94,14 @@ Game state (prompt bank, rooms, scores) goes through a swappable KV layer:
 
 The driver is picked automatically in that order. **Vercel's filesystem is read-only**, so a Vercel deploy with no Redis lands on `memory` — rooms and the question bank then reset on every cold start, and requests hitting different instances will see "room not found" or scores that disagree. The Question Bank page tells you which driver is live.
 
+#### In a hurry? Demo mode
+
+Need to show the app right now and cannot stop to provision a database: on the home page an admin gets a **🎬 Use demo mode** button next to the warning. Demo mode runs the entire game — rooms, teams, timer, scoring, the question bank — inside the browser against `localStorage`, using the same rules module as the server (`lib/rules.ts`). No server calls, no setup, nothing to fail on stage, and it survives a reload.
+
+The catch, and it is the whole reason the shared store exists: **a demo room lives in one browser**, so a second device cannot join it. A standing `🎬 DEMO MODE` badge sits at the bottom of every page so nobody mistakes a demo room for a real one; click it to turn demo mode off.
+
+#### The real fix
+
 **The app has a page for this: open `/setup` on your deployment.** It runs a live read/write test, names which environment variables it found, and walks through the fix. Re-test from the same page after redeploying.
 
 The fastest route:
@@ -139,7 +147,9 @@ app/
   api/rooms/[code]/route.ts  Room polling + every room action
   api/health/route.ts        Which store driver is active
 lib/
-  game.ts                    Rooms, teams, bank, import/export, dealing, scoring
+  rules.ts                   Pure game rules — no storage, runs on server and in the browser
+  game.ts                    Store-backed layer over rules (bank + room persistence)
+  demo.ts                    Browser-side engine: the same rules over localStorage
   admin.ts                   Password check and HMAC-signed admin tokens
   store.ts                   KV store (redis / file / memory drivers + in-process write lock)
   serialize.ts               The room view sent to clients (the deck never leaves the server)
