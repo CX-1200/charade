@@ -1,8 +1,17 @@
 import { NextResponse } from 'next/server';
-import { storeDriver, storeIsDurable, storeLocation } from '@/lib/store';
+import { detectedVars, storeDriver, storeIsDurable, storeLocation, storePing } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  return NextResponse.json({ ok: true, storeDriver, durable: storeIsDurable, storeLocation });
+  const ping = await storePing();
+  return NextResponse.json({
+    ok: ping.ok,
+    storeDriver,
+    durable: storeIsDurable,
+    storeLocation,
+    // Names only — never the values.
+    detected: detectedVars,
+    error: ping.error ?? null,
+  });
 }

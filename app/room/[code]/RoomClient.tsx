@@ -174,9 +174,8 @@ export default function RoomClient({ code }: { code: string }) {
                 which is what just happened to {code}.
               </p>
               <div className="notice">
-                Fix: set <code>UPSTASH_REDIS_REST_URL</code> and{' '}
-                <code>UPSTASH_REDIS_REST_TOKEN</code> (or the Vercel KV pair) in the project&rsquo;s
-                environment variables and redeploy. See the README for the steps.
+                This is a one-time deployment setup, not a bug in the game.{' '}
+                <Link href="/setup">Open storage setup</Link> for the exact steps and a live check.
               </div>
             </>
           ) : (

@@ -12,8 +12,42 @@ import { join } from 'node:path';
  *               demo, lost on restart, not shared between instances.
  */
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+/**
+ * Different providers inject different names for the same pair of values, so we
+ * accept all the common ones rather than making people rename variables.
+ */
+const URL_VARS = [
+  'UPSTASH_REDIS_REST_URL',
+  'KV_REST_API_URL',
+  'REDIS_REST_URL',
+  'STORAGE_REST_URL',
+] as const;
+const TOKEN_VARS = [
+  'UPSTASH_REDIS_REST_TOKEN',
+  'KV_REST_API_TOKEN',
+  'REDIS_REST_TOKEN',
+  'STORAGE_REST_TOKEN',
+] as const;
+
+const pick = (names: readonly string[]) => {
+  for (const name of names) {
+    const value = (process.env[name] ?? '').trim();
+    if (value) return { name, value };
+  }
+  return { name: '', value: '' };
+};
+
+const urlVar = pick(URL_VARS);
+const tokenVar = pick(TOKEN_VARS);
+const REDIS_URL = urlVar.value.replace(/\/+$/, '');
+const REDIS_TOKEN = tokenVar.value;
+
+/** Which env var names were actually found — reported by /api/health. */
+export const detectedVars = {
+  url: urlVar.name || null,
+  token: tokenVar.name || null,
+  looksLikeRedisUrl: /^rediss?:\/\//i.test(urlVar.value),
+};
 
 type Entry = { value: string; expiresAt: number | null };
 type Bucket = Map<string, Entry>;
@@ -164,5 +198,31 @@ export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T>
   } finally {
     release();
     if (locks.get(key) === chained) locks.delete(key);
+  }
+}
+
+
+/**
+ * Real round-trip against the active store. `/api/health` and the setup page
+ * use it so a misconfigured Redis shows up as a clear failure rather than as
+ * mysterious 500s during a game.
+ */
+export async function storePing(): Promise<{ ok: boolean; error?: string }> {
+  const key = 'charade:__ping';
+  try {
+    await kvSet(key, { at: Date.now() }, 60);
+    const back = await kvGet<{ at: number }>(key);
+    await kvDel(key);
+    if (!back?.at) return { ok: false, error: 'Wrote a probe value but could not read it back' };
+    return { ok: true };
+  } catch (error) {
+    // Never echo the raw response — it can contain the credential.
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message.match(/\((\d{3})\)/)?.[1];
+    if (status === '401' || status === '403') {
+      return { ok: false, error: 'Rejected by the store: the token is wrong or expired' };
+    }
+    if (status) return { ok: false, error: `Store responded with HTTP ${status}` };
+    return { ok: false, error: 'Could not reach the store — check the URL' };
   }
 }

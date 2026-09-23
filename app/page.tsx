@@ -127,8 +127,8 @@ export default function HomePage() {
         {admin && storage && !storage.durable && (
           <div className="notice">
             ⚠️ This deployment has no shared storage, so rooms live in one server instance only and
-            other players will get &ldquo;no such room&rdquo;. Set the Redis / Vercel KV environment
-            variables and redeploy — see the README.
+            other players will get &ldquo;no such room&rdquo;.{' '}
+            <Link href="/setup">Fix it in storage setup →</Link>
           </div>
         )}
 

@@ -94,14 +94,17 @@ Game state (prompt bank, rooms, scores) goes through a swappable KV layer:
 
 The driver is picked automatically in that order. **Vercel's filesystem is read-only**, so a Vercel deploy with no Redis lands on `memory` — rooms and the question bank then reset on every cold start, and requests hitting different instances will see "room not found" or scores that disagree. The Question Bank page tells you which driver is live.
 
-Pick either (both have a free tier):
+**The app has a page for this: open `/setup` on your deployment.** It runs a live read/write test, names which environment variables it found, and walks through the fix. Re-test from the same page after redeploying.
 
-- **Upstash Redis** — create a Redis database at [upstash.com](https://upstash.com) and put the REST URL and token into your Vercel environment variables:
-  - `UPSTASH_REDIS_REST_URL`
-  - `UPSTASH_REDIS_REST_TOKEN`
-- **Vercel KV / Vercel Redis** — create it from the project's Storage tab. It injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`, which this code reads as well.
+The fastest route:
 
-Redeploy after setting the variables. Hit `/api/health` to confirm which driver is live.
+1. Vercel project → **Storage** → **Create Database** → **Upstash for Redis** (free plan). Vercel connects it and injects the credentials.
+2. Project → **Settings** → **Environment Variables** — confirm a URL and a token are present under `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL` + `KV_REST_API_TOKEN` (`REDIS_REST_*` and `STORAGE_REST_*` are accepted too). The URL must be the **`https://` REST endpoint** — a `redis://` connection string is a different protocol and will not work.
+3. **Redeploy.** Variables are read at boot, so a running deployment keeps its old values.
+
+Doing it by hand instead: create the database at [upstash.com](https://upstash.com) and copy its REST URL and REST token from the database page into those variables.
+
+`/api/health` returns the same information as JSON, including the result of a real round-trip against the store — so a wrong token shows up as a clear failure rather than as 500s mid-game.
 
 ### The question bank is a database, not a fixture
 
