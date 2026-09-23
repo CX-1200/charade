@@ -64,7 +64,9 @@ Measured at 50 players + 10 judges (see the numbers in the commit history):
 | Sustained burst (52 answers/s) | 600/600 answers counted, none lost, none rejected |
 | Room document | 16 KB with 600 answers recorded |
 
-One thing to watch: a busy game is chatty with Redis — roughly 2,000 commands for a 30-second round with 60 people. Upstash's free tier allows 10,000 commands a day, so a few real games will exhaust it. Move to a paid plan if you run this regularly.
+One thing to watch: a busy game is chatty with Redis. Measured with all 60 browsers polling exactly as the real UI does, a room uses about **3,400 commands a minute in the lobby and 6,300 a minute during a round** — most of it polling. A game night of ~30 minutes in the lobby and ~20 minutes of rounds comes to roughly **230,000 commands**. Upstash's free tier is 500,000 commands a month, so that is about two such evenings a month before you hit the ceiling.
+
+Free-tier databases are also archived when idle: Upstash after 30 days without activity (data is backed up and restorable), Turso after 10 days (manual unarchive). Keep your questions in a file you can re-import (Export JSON on the Question Bank page) so an archived database never costs you them.
 
 ## Run locally
 
