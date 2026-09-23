@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
-import DemoBadge from '@/components/DemoBadge';
+import DemoMode from '@/components/DemoMode';
 
 export const metadata: Metadata = {
   title: 'Charade Party',
@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         {children}
-        <DemoBadge />
+        <DemoMode />
       </body>
     </html>
   );

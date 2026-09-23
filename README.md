@@ -102,6 +102,8 @@ The admin gate is off in demo mode, because it is one person in one browser and 
 
 The catch, and it is the whole reason the shared store exists: **a demo room lives in one browser**, so a second device cannot join it. A standing `🎬 DEMO MODE` badge sits at the bottom of every page so nobody mistakes a demo room for a real one; the home page carries the same note with a link to `/setup` and a switch to turn it off.
 
+**Going back to a real store is automatic.** The flag follows the server in both directions, so the moment `/api/health` reports a shared store the browser leaves demo mode, reloads once, and the admin gate applies again — no stale local state pretending your new database did nothing. If that browser built a question bank during the demo, the Question Bank page offers to **merge it into** or **replace** the server bank, or discard it, rather than stranding it in `localStorage`.
+
 #### The real fix
 
 **The app has a page for this: open `/setup` on your deployment.** It runs a live read/write test, names which environment variables it found, and walks through the fix. Re-test from the same page after redeploying.

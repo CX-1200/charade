@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
-import { isDemoMode, setDemoMode } from '@/lib/demo';
+import { DEMO_EVENT, isDemoMode, setDemoMode } from '@/lib/demo';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
 type CreateResponse = { code: string; playerId: string };
@@ -26,17 +26,14 @@ export default function HomePage() {
   useEffect(() => {
     setName(session.getName());
     setDemo(isDemoMode());
+    // components/DemoMode keeps the flag itself in step with the server.
     api<{ durable: boolean }>('/api/health')
-      .then((health) => {
-        setStorage(health);
-        // Nothing works on a deployment with no shared store, so switch the
-        // game to the local engine rather than leaving the user stuck.
-        if (!health.durable && !isDemoMode()) {
-          setDemoMode(true);
-          setDemo(true);
-        }
-      })
+      .then(setStorage)
       .catch(() => undefined);
+
+    const sync = () => setDemo(isDemoMode());
+    window.addEventListener(DEMO_EVENT, sync);
+    return () => window.removeEventListener(DEMO_EVENT, sync);
   }, []);
 
   function toggleDemo(on: boolean) {

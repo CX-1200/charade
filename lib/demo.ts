@@ -71,6 +71,20 @@ export function setDemoMode(on: boolean): void {
   window.dispatchEvent(new Event(DEMO_EVENT));
 }
 
+/** The demo bank, if this browser built one — used to hand it to the server. */
+export function readDemoBank(): Bank | null {
+  const bank = read<Bank>(BANK_KEY);
+  return bank?.categories?.length ? bank : null;
+}
+
+export function clearDemoBank(): void {
+  try {
+    localStorage.removeItem(BANK_KEY);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
 /* --------------------------------------------------------------- storage */
 
 function read<T>(key: string): T | null {
