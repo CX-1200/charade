@@ -83,8 +83,6 @@ export type Room = {
   startedAt: number | null;
   endsAt: number | null;
   createdAt: number;
-  /** Hard end of life — the room shuts itself down at this moment. */
-  closesAt: number;
   updatedAt: number;
 };
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, formatClock, formatSpan, post, session } from '@/lib/client';
+import { api, formatClock, post, session } from '@/lib/client';
 import { DURATION_PRESETS, MAX_DURATION, MIN_DURATION, teamColor } from '@/lib/ui';
 import type { RoomView } from '@/lib/serialize';
 import type { Bank } from '@/lib/types';
@@ -48,8 +48,7 @@ export default function RoomClient({ code }: { code: string }) {
       setError('');
     } catch (e) {
       const err = e as Error & { status?: number };
-      // 404/410 mean the room is gone: expired, or the last player left.
-      if (err.status === 404 || err.status === 410) {
+      if (err.status === 404) {
         session.clearPlayerId(code);
         setClosed(true);
       }
@@ -96,7 +95,7 @@ export default function RoomClient({ code }: { code: string }) {
         return data;
       } catch (e) {
         const err = e as Error & { status?: number };
-        if (err.status === 410) {
+        if (err.status === 404) {
           session.clearPlayerId(code);
           setClosed(true);
         }
@@ -154,9 +153,10 @@ export default function RoomClient({ code }: { code: string }) {
       <main className="shell">
         <Header code={code} />
         <div className="card">
-          <h1>This room is closed</h1>
+          <h1>No such room</h1>
           <p className="sub">
-            Rooms shut down three hours after they open, or as soon as the last player leaves.
+            Nothing is running under the code {code}. Check the code, or ask an admin to create the
+            room.
           </p>
           <Link className="btn primary" href="/">
             ← Back home
@@ -241,7 +241,7 @@ export default function RoomClient({ code }: { code: string }) {
       )}
 
       <p className="muted" style={{ marginTop: 20, textAlign: 'center' }}>
-        Room {code} · closes in {formatSpan(room.closesInMs)} ·{' '}
+        Room {code} ·{' '}
         {admin && (
           <>
             <Link href="/questions">Question Bank</Link> ·{' '}

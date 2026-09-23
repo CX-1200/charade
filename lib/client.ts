@@ -66,11 +66,3 @@ export function formatClock(ms: number): string {
   const s = total % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
-
-/** "2h 41m" / "12m" — used for how long a room has left. */
-export function formatSpan(ms: number): string {
-  const minutes = Math.max(0, Math.floor(ms / 60000));
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return h ? `${h}h ${m}m` : `${m}m`;
-}

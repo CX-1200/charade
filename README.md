@@ -34,7 +34,9 @@ Scoring: correct `+1`, skip `0` (the admin can turn on "skips cost 1 point"). Po
 
 ## Room lifetime
 
-A room shuts itself down **3 hours after it was created**, and immediately once the **last player leaves**. `Leave game` in the room header takes you back to the home page at any point — lobby, mid-round or on the dashboard. Reopening a closed room shows a "this room is closed" page rather than a broken lobby.
+Rooms do not close themselves. They survive an empty lobby, so the same 4-character code still works when people drift away and come back — the first person to rejoin an empty room becomes its host. `Leave game` in the room header takes you back to the home page at any point (lobby, mid-round or on the dashboard) without affecting anyone else.
+
+Stored rooms carry a 30-day TTL that is refreshed on every write. That is storage hygiene, not a game rule: a room only disappears after a full month with nobody touching it.
 
 ## Run locally
 
@@ -99,8 +101,6 @@ Pick either (both have a free tier):
 - **Vercel KV / Vercel Redis** — create it from the project's Storage tab. It injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`, which this code reads as well.
 
 Redeploy after setting the variables. Hit `/api/health` to confirm which driver is live.
-
-Rooms carry a 12-hour TTL and clean themselves up.
 
 ## Design
 

@@ -51,9 +51,6 @@ function fail(error: unknown) {
   );
 }
 
-const roomClosed = () =>
-  NextResponse.json({ error: 'Room closed — everybody left', closed: true }, { status: 410 });
-
 /** Poll endpoint: returns the whole room view and keeps the caller's presence warm. */
 export async function GET(request: Request, ctx: Ctx) {
   try {
@@ -63,7 +60,7 @@ export async function GET(request: Request, ctx: Ctx) {
     const admin = isAdmin(params.get('adminToken'));
 
     const room = await getRoom(code);
-    if (!room) throw new HttpError(404, 'Room not found or closed');
+    if (!room) throw new HttpError(404, 'Room not found');
 
     const before = room.state;
     touch(room, playerId);
@@ -173,9 +170,6 @@ export async function POST(request: Request, ctx: Ctx) {
           throw new HttpError(400, `Unknown action: ${action}`);
       }
     });
-
-    // withRoom returns null when the last player left and the room shut down.
-    if (!room) return roomClosed();
 
     const viewer = joinedId ?? playerId;
     const bank = await getBank();

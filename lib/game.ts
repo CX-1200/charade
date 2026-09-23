@@ -1,4 +1,4 @@
-import { kvDel, kvGet, kvSet, withLock } from './store';
+import { kvGet, kvSet, withLock } from './store';
 import { HttpError } from './errors';
 import { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
 import type {
@@ -16,8 +16,12 @@ export { HttpError };
 export { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
 
 const BANK_KEY = 'charade:bank';
-/** A room shuts itself down three hours after it was created. */
-export const ROOM_LIFETIME_MS = 1000 * 60 * 60 * 3;
+/**
+ * Rooms have no lifetime of their own: they survive an empty lobby and are
+ * reusable the next day. This TTL is storage hygiene only — it is refreshed on
+ * every write, so a room disappears solely after a month of total silence.
+ */
+const ROOM_TTL_SECONDS = 60 * 60 * 24 * 30;
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const MAX_TEAMS = TEAM_COLORS.length;
 
@@ -132,40 +136,25 @@ const roomKey = (code: string) => `charade:room:${code.toUpperCase()}`;
 
 export async function getRoom(code: string): Promise<Room | null> {
   if (!code) return null;
-  const room = await kvGet<Room>(roomKey(code));
-  if (!room) return null;
-  if (Date.now() >= room.closesAt) {
-    await kvDel(roomKey(code));
-    return null;
-  }
-  return room;
-}
-
-export async function closeRoom(code: string): Promise<void> {
-  await kvDel(roomKey(code));
+  return kvGet<Room>(roomKey(code));
 }
 
 export async function saveRoom(room: Room): Promise<Room> {
   room.updatedAt = Date.now();
-  const ttl = Math.max(60, Math.ceil((room.closesAt - Date.now()) / 1000));
-  await kvSet(roomKey(room.code), room, ttl);
+  await kvSet(roomKey(room.code), room, ROOM_TTL_SECONDS);
   return room;
 }
 
 export async function withRoom(
   code: string,
   mutate: (room: Room) => void | Promise<void>,
-): Promise<Room | null> {
+): Promise<Room> {
   return withLock(roomKey(code), async () => {
     const room = await getRoom(code);
-    if (!room) throw new HttpError(404, 'Room not found or closed');
+    if (!room) throw new HttpError(404, 'Room not found');
     settle(room);
     await mutate(room);
-    // An empty room has nothing left to host — shut it down instead of saving it.
-    if (!room.players.length) {
-      await closeRoom(room.code);
-      return null;
-    }
+    // An empty room stays put — the same code works when people come back.
     return saveRoom(room);
   });
 }
@@ -205,7 +194,6 @@ export async function createRoom(hostName: string): Promise<Room> {
     startedAt: null,
     endsAt: null,
     createdAt: now,
-    closesAt: now + ROOM_LIFETIME_MS,
     updatedAt: now,
   };
   return saveRoom(room);

@@ -28,8 +28,6 @@ export function publicRoom(
       startedAt: room.startedAt,
       endsAt: room.endsAt,
       remainingMs: room.endsAt ? Math.max(0, room.endsAt - now) : 0,
-      closesAt: room.closesAt,
-      closesInMs: Math.max(0, room.closesAt - now),
       answered: room.log.length,
       deckSize: room.deck.length,
       promptCount: opts.bank ? countPrompts(opts.bank, room.settings.categoryIds) : null,
