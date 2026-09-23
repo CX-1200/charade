@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
-import DemoMode from '@/components/DemoMode';
 
 export const metadata: Metadata = {
   title: 'Charade Party',
@@ -18,10 +17,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        {children}
-        <DemoMode />
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

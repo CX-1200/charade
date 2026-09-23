@@ -4,10 +4,35 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
-import { clearDemoBank, isDemoMode, readDemoBank } from '@/lib/demo';
 import type { Bank } from '@/lib/types';
 
 type Storage = { driver: 'redis' | 'file' | 'memory'; durable: boolean };
+
+/**
+ * Demo mode is gone, but a browser that ran one may still hold the bank it
+ * built there. Offer to rescue it once, then the key is cleared for good.
+ * Safe to delete this and its card once no browser has one left.
+ */
+const LEGACY_DEMO_BANK_KEY = 'charade:demo:bank';
+
+function readDemoBank(): Bank | null {
+  try {
+    const raw = localStorage.getItem(LEGACY_DEMO_BANK_KEY);
+    const bank = raw ? (JSON.parse(raw) as Bank) : null;
+    return bank?.categories?.length ? bank : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearDemoBank(): void {
+  try {
+    localStorage.removeItem(LEGACY_DEMO_BANK_KEY);
+    localStorage.removeItem('charade:demoMode');
+  } catch {
+    /* nothing to clear */
+  }
+}
 type BankResponse = { bank: Bank; storage?: Storage };
 
 export default function QuestionsPage() {
@@ -21,7 +46,7 @@ export default function QuestionsPage() {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  // A bank built during demo mode lives in this browser, not on the server.
+  // A bank left behind by the old demo mode, if this browser ran one.
   const [strandedBank, setStrandedBank] = useState<Bank | null>(null);
 
   const active = useMemo(
@@ -34,7 +59,7 @@ export default function QuestionsPage() {
   );
 
   useEffect(() => {
-    if (!isDemoMode()) setStrandedBank(readDemoBank());
+    setStrandedBank(readDemoBank());
     api<BankResponse>('/api/bank')
       .then((data) => {
         setBank(data.bank);
@@ -187,7 +212,7 @@ export default function QuestionsPage() {
         <div className="card">
           <h2>📦 A question bank from demo mode</h2>
           <p className="sub" style={{ marginBottom: 14 }}>
-            This browser still holds the bank you built while running in demo mode —{' '}
+This browser still holds the bank it built back when demo mode existed —{' '}
             <b>
               {strandedBank.categories.length} categories,{' '}
               {strandedBank.categories.reduce((sum, c) => sum + c.items.length, 0)} questions

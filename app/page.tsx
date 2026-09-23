@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
-import { DEMO_EVENT, isDemoMode, setDemoMode } from '@/lib/demo';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
 type CreateResponse = { code: string; playerId: string };
@@ -21,25 +20,13 @@ export default function HomePage() {
   const [showUnlock, setShowUnlock] = useState(false);
 
   const [storage, setStorage] = useState<{ durable: boolean } | null>(null);
-  const [demo, setDemo] = useState(false);
 
   useEffect(() => {
     setName(session.getName());
-    setDemo(isDemoMode());
-    // components/DemoMode keeps the flag itself in step with the server.
     api<{ durable: boolean }>('/api/health')
       .then(setStorage)
       .catch(() => undefined);
-
-    const sync = () => setDemo(isDemoMode());
-    window.addEventListener(DEMO_EVENT, sync);
-    return () => window.removeEventListener(DEMO_EVENT, sync);
   }, []);
-
-  function toggleDemo(on: boolean) {
-    setDemoMode(on);
-    setDemo(on);
-  }
 
   function lock() {
     session.clearAdminToken();
@@ -91,7 +78,7 @@ export default function HomePage() {
         <div className="brand">
           <span className="logo">🎭</span> Charade Party
         </div>
-        {demo ? null : admin ? (
+        {admin ? (
           <button className="chip on" onClick={lock} title="Lock admin again">
             🔓 Admin unlocked
           </button>
@@ -137,33 +124,13 @@ export default function HomePage() {
         </p>
 
         {error && <div className="err">{error}</div>}
-        {demo && (
-          <div className="notice">
-            🎬 <b>Demo mode.</b> The whole game runs in this browser — create a room and play, no
-            password and no setup. The one catch: a demo room lives here, so a second device cannot
-            join it.
-            <div className="row tight" style={{ marginTop: 10 }}>
-              <Link className="btn sm" href="/setup">
-                Enable multi-device →
-              </Link>
-              <button className="btn sm ghost" onClick={() => toggleDemo(false)}>
-                Turn demo mode off
-              </button>
-            </div>
-          </div>
-        )}
-        {!demo && storage && !storage.durable && (
+        {storage && !storage.durable && (
           <div className="notice">
             ⚠️ This deployment has no shared storage, so rooms live in one server instance only and
             other players will get &ldquo;no such room&rdquo;.
-            <div className="row tight" style={{ marginTop: 10 }}>
-              <button className="btn sm primary" onClick={() => toggleDemo(true)}>
-                🎬 Use demo mode
-              </button>
-              <Link className="btn sm" href="/setup">
-                Fix it properly →
-              </Link>
-            </div>
+            <Link className="btn sm primary" href="/setup" style={{ marginTop: 10 }}>
+              Fix it in storage setup →
+            </Link>
           </div>
         )}
 
@@ -211,11 +178,9 @@ export default function HomePage() {
               {busy === 'create' ? 'Creating…' : '🎉 Create room'}
             </button>
             <p className="muted" style={{ marginTop: 8 }}>
-              {demo
-                ? 'You control the timer, categories and teams.'
-                : admin
-                  ? 'You will control the timer, categories and teams.'
-                  : 'Admins only — unlock admin at the top right.'}
+              {admin
+                ? 'You will control the timer, categories and teams.'
+                : 'Admins only — unlock admin at the top right.'}
             </p>
           </div>
         </div>
