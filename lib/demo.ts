@@ -115,32 +115,16 @@ function saveRoom(room: Room): Room {
 }
 
 /**
- * In demo mode everything happens in one browser, so "is this an admin" is just
- * "did this browser unlock admin". The server still issues that token; there is
- * simply nobody else here to protect the settings from.
+ * Demo mode is one person in one browser, so the admin gate protects nobody and
+ * only gets in the way of starting a demo. The whole local session is admin.
+ * Server-side enforcement is untouched: once a shared store is configured, demo
+ * mode is off and every privileged action is checked against a real token again.
  */
-function hasAdminToken(token: unknown): boolean {
-  return typeof token === 'string' && token.length > 0;
-}
-
-function requireAdmin(token: unknown): void {
-  if (!hasAdminToken(token)) throw new HttpError(403, 'Admin access required');
-}
+const DEMO_IS_ADMIN = true;
 
 const storage = { driver: 'demo' as const, durable: true };
 
 /* ---------------------------------------------------------------- routes */
-
-const ADMIN_ACTIONS = new Set([
-  'settings',
-  'removeTeam',
-  'setTeamActive',
-  'start',
-  'finish',
-  'reset',
-  'clearHistory',
-  'kick',
-]);
 
 function view(room: Room, playerId: string | null, admin: boolean) {
   return { ...publicRoom(room, playerId, { admin, bank: getBank() }), playerId };
@@ -148,7 +132,6 @@ function view(room: Room, playerId: string | null, admin: boolean) {
 
 /** Mirrors POST /api/rooms */
 function createRoomHandler(body: Record<string, unknown>) {
-  requireAdmin(body.adminToken);
   const name = clean(body.name, 20);
   if (!name) throw new HttpError(400, 'Please enter your name');
   let code = roomCode();
@@ -160,21 +143,19 @@ function createRoomHandler(body: Record<string, unknown>) {
 }
 
 /** Mirrors GET /api/rooms/[code] */
-function roomView(code: string, playerId: string | null, adminToken: string | null) {
+function roomView(code: string, playerId: string | null) {
   const room = getRoom(code);
   if (!room) throw new HttpError(404, 'Room not found');
   touch(room, playerId);
   settle(room);
   saveRoom(room);
-  return view(room, playerId, hasAdminToken(adminToken));
+  return view(room, playerId, DEMO_IS_ADMIN);
 }
 
 /** Mirrors POST /api/rooms/[code] */
 function roomAction(code: string, body: Record<string, unknown>) {
   const action = String(body.action ?? '');
   const playerId = typeof body.playerId === 'string' ? body.playerId : null;
-  const admin = hasAdminToken(body.adminToken);
-  if (ADMIN_ACTIONS.has(action)) requireAdmin(body.adminToken);
 
   const room = getRoom(code);
   if (!room) throw new HttpError(404, 'Room not found');
@@ -246,12 +227,11 @@ function roomAction(code: string, body: Record<string, unknown>) {
   }
 
   saveRoom(room);
-  return view(room, joinedId ?? playerId, admin);
+  return view(room, joinedId ?? playerId, DEMO_IS_ADMIN);
 }
 
 /** Mirrors the bank routes */
 function bankAction(body: Record<string, unknown>) {
-  requireAdmin(body.adminToken);
   const action = String(body.action ?? '');
   const bank = getBank();
 
@@ -356,7 +336,7 @@ export function handleDemoRequest(
     if (roomMatch && method === 'GET') {
       return {
         status: 200,
-        data: roomView(roomMatch[1], params.get('playerId'), params.get('adminToken')),
+        data: roomView(roomMatch[1], params.get('playerId')),
       };
     }
     if (roomMatch && method === 'POST') {

@@ -2,13 +2,23 @@
 
 import { useEffect, useState } from 'react';
 import { post, session } from '@/lib/client';
+import { DEMO_EVENT, isDemoMode } from '@/lib/demo';
 
 type UnlockResponse = { token: string; expiresAt: number };
 
-/** Tracks whether this browser holds a live admin token. */
+/** Whether this browser may use admin features: a live token, or demo mode. */
 export function useAdmin() {
   const [admin, setAdmin] = useState<boolean | null>(null); // null = still checking
-  useEffect(() => setAdmin(!!session.getAdminToken()), []);
+  useEffect(() => {
+    const sync = () => setAdmin(isDemoMode() || !!session.getAdminToken());
+    sync();
+    window.addEventListener(DEMO_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(DEMO_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
   return [admin, setAdmin] as const;
 }
 

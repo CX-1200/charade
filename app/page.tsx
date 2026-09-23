@@ -27,7 +27,15 @@ export default function HomePage() {
     setName(session.getName());
     setDemo(isDemoMode());
     api<{ durable: boolean }>('/api/health')
-      .then(setStorage)
+      .then((health) => {
+        setStorage(health);
+        // Nothing works on a deployment with no shared store, so switch the
+        // game to the local engine rather than leaving the user stuck.
+        if (!health.durable && !isDemoMode()) {
+          setDemoMode(true);
+          setDemo(true);
+        }
+      })
       .catch(() => undefined);
   }, []);
 
@@ -86,7 +94,7 @@ export default function HomePage() {
         <div className="brand">
           <span className="logo">🎭</span> Charade Party
         </div>
-        {admin ? (
+        {demo ? null : admin ? (
           <button className="chip on" onClick={lock} title="Lock admin again">
             🔓 Admin unlocked
           </button>
@@ -132,31 +140,34 @@ export default function HomePage() {
         </p>
 
         {error && <div className="err">{error}</div>}
-        {demo ? (
+        {demo && (
           <div className="notice">
-            🎬 <b>Demo mode is on.</b> The whole game runs in this browser — no server, no setup,
-            and nothing to go wrong on stage. Other devices cannot join a demo room.{' '}
-            <button className="btn sm ghost" onClick={() => toggleDemo(false)}>
-              Turn off
-            </button>
-          </div>
-        ) : (
-          admin &&
-          storage &&
-          !storage.durable && (
-            <div className="notice">
-              ⚠️ This deployment has no shared storage, so rooms live in one server instance only
-              and other players will get &ldquo;no such room&rdquo;.
-              <div className="row tight" style={{ marginTop: 10 }}>
-                <button className="btn sm primary" onClick={() => toggleDemo(true)}>
-                  🎬 Use demo mode
-                </button>
-                <Link className="btn sm" href="/setup">
-                  Fix it properly →
-                </Link>
-              </div>
+            🎬 <b>Demo mode.</b> The whole game runs in this browser — create a room and play, no
+            password and no setup. The one catch: a demo room lives here, so a second device cannot
+            join it.
+            <div className="row tight" style={{ marginTop: 10 }}>
+              <Link className="btn sm" href="/setup">
+                Enable multi-device →
+              </Link>
+              <button className="btn sm ghost" onClick={() => toggleDemo(false)}>
+                Turn demo mode off
+              </button>
             </div>
-          )
+          </div>
+        )}
+        {!demo && storage && !storage.durable && (
+          <div className="notice">
+            ⚠️ This deployment has no shared storage, so rooms live in one server instance only and
+            other players will get &ldquo;no such room&rdquo;.
+            <div className="row tight" style={{ marginTop: 10 }}>
+              <button className="btn sm primary" onClick={() => toggleDemo(true)}>
+                🎬 Use demo mode
+              </button>
+              <Link className="btn sm" href="/setup">
+                Fix it properly →
+              </Link>
+            </div>
+          </div>
         )}
 
         <label className="field">
@@ -203,9 +214,11 @@ export default function HomePage() {
               {busy === 'create' ? 'Creating…' : '🎉 Create room'}
             </button>
             <p className="muted" style={{ marginTop: 8 }}>
-              {admin
-                ? 'You will control the timer, categories and teams.'
-                : 'Admins only — unlock admin at the top right.'}
+              {demo
+                ? 'You control the timer, categories and teams.'
+                : admin
+                  ? 'You will control the timer, categories and teams.'
+                  : 'Admins only — unlock admin at the top right.'}
             </p>
           </div>
         </div>

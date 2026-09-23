@@ -96,9 +96,11 @@ The driver is picked automatically in that order. **Vercel's filesystem is read-
 
 #### In a hurry? Demo mode
 
-Need to show the app right now and cannot stop to provision a database: on the home page an admin gets a **🎬 Use demo mode** button next to the warning. Demo mode runs the entire game — rooms, teams, timer, scoring, the question bank — inside the browser against `localStorage`, using the same rules module as the server (`lib/rules.ts`). No server calls, no setup, nothing to fail on stage, and it survives a reload.
+Nothing works on a deployment with no shared store, so rather than leave you stuck the app **switches itself into demo mode**: the entire game — rooms, teams, timer, scoring, the question bank — runs inside the browser against `localStorage`, using the same rules module as the server (`lib/rules.ts`). Open the URL, type a name, create a room, play. No password, no setup, nothing to fail on stage, and it survives a reload.
 
-The catch, and it is the whole reason the shared store exists: **a demo room lives in one browser**, so a second device cannot join it. A standing `🎬 DEMO MODE` badge sits at the bottom of every page so nobody mistakes a demo room for a real one; click it to turn demo mode off.
+The admin gate is off in demo mode, because it is one person in one browser and there is nobody to protect the settings from. **Server-side enforcement is untouched** — configure a shared store and demo mode stops engaging, the gate applies again, and every privileged action is checked against a real token.
+
+The catch, and it is the whole reason the shared store exists: **a demo room lives in one browser**, so a second device cannot join it. A standing `🎬 DEMO MODE` badge sits at the bottom of every page so nobody mistakes a demo room for a real one; the home page carries the same note with a link to `/setup` and a switch to turn it off.
 
 #### The real fix
 
