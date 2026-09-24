@@ -15,8 +15,22 @@ const storageOf = (error: ApiError): Storage | null =>
   (error.body?.storage as Storage | undefined) ?? null;
 type Act = (body: Record<string, unknown>) => Promise<ViewResponse | null>;
 
-const POLL_PLAYING = 900;
-const POLL_IDLE = 1600;
+/**
+ * Polling is almost all of this app's database traffic, so each screen polls
+ * only as fast as it needs to:
+ *
+ * - A player mid-round barely needs to: their next card comes back in the
+ *   response to their own answer, and the countdown runs locally from endsAt.
+ *   Polling only catches the admin ending the round early — and an answer
+ *   sent after that gets a 409, which triggers an immediate refresh anyway.
+ * - A judge's live scoreboard is the one screen that should feel live.
+ * - Lobby and results change rarely.
+ * - A hidden tab (phone in a pocket) just keeps its place.
+ */
+const POLL_PLAYER_IN_ROUND = 5000;
+const POLL_SCOREBOARD = 1500;
+const POLL_IDLE = 3000;
+const POLL_HIDDEN = 15000;
 
 export default function RoomClient({ code }: { code: string }) {
   const router = useRouter();
@@ -77,13 +91,32 @@ export default function RoomClient({ code }: { code: string }) {
       .catch(() => undefined);
   }, [refresh]);
 
-  // Poll the room; faster while a round is running.
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const sync = () => {
+      const nowHidden = document.visibilityState === 'hidden';
+      setHidden(nowHidden);
+      // Catch up the moment someone looks at the screen again.
+      if (!nowHidden) void refresh();
+    };
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, [refresh]);
+
+  const roomState = view?.room.state;
+  const watching = !!view?.you?.spectating;
   useEffect(() => {
     if (closed) return;
-    const delay = view?.room.state === 'playing' ? POLL_PLAYING : POLL_IDLE;
+    const delay = hidden
+      ? POLL_HIDDEN
+      : roomState === 'playing'
+        ? watching
+          ? POLL_SCOREBOARD
+          : POLL_PLAYER_IN_ROUND
+        : POLL_IDLE;
     const timer = setInterval(() => void refresh(), delay);
     return () => clearInterval(timer);
-  }, [refresh, view?.room.state, closed]);
+  }, [refresh, roomState, watching, hidden, closed]);
 
   // Local clock so the countdown stays smooth between polls.
   useEffect(() => {
@@ -111,13 +144,16 @@ export default function RoomClient({ code }: { code: string }) {
         const err = e as ApiError;
         const hint = err.status === 404 ? storageOf(err) : null;
         if (hint) setStorage(hint);
+        // A conflict means the room moved on without us (the round ended
+        // early, say) — fetch the real state rather than showing stale UI.
+        if (err.status === 409) void refresh();
         setError(err.message);
         return null;
       } finally {
         setBusy(false);
       }
     },
-    [code, applyView],
+    [code, applyView, refresh],
   );
 
   async function join() {
@@ -148,12 +184,27 @@ export default function RoomClient({ code }: { code: string }) {
   const you = view?.you ?? null;
   const admin = !!view?.admin;
 
+  const durationMs = (room?.settings.durationSec ?? 0) * 1000;
   const remainingMs = useMemo(() => {
     if (!room?.endsAt || room.state !== 'playing') return 0;
-    return Math.max(0, room.endsAt - (tick + offsetRef.current));
-  }, [room?.endsAt, room?.state, tick]);
+    // Clamped so the lead-in never shows as extra time on the clock.
+    return Math.min(durationMs, Math.max(0, room.endsAt - (tick + offsetRef.current)));
+  }, [room?.endsAt, room?.state, tick, durationMs]);
 
-  const timeUp = room?.state === 'playing' && remainingMs <= 0;
+  /** The shared "3, 2, 1" before a round, so everyone starts together. */
+  const startsInMs = useMemo(() => {
+    if (!room?.startedAt || room.state !== 'playing') return 0;
+    return Math.max(0, room.startedAt - (tick + offsetRef.current));
+  }, [room?.startedAt, room?.state, tick]);
+
+  // The server holds cards back until "go" — fetch ours the instant it lands
+  // rather than waiting for the next (slow, in-round) poll.
+  const leadInOver = room?.state === 'playing' && startsInMs <= 0;
+  useEffect(() => {
+    if (leadInOver) void refresh();
+  }, [leadInOver, refresh]);
+
+  const timeUp = room?.state === 'playing' && startsInMs <= 0 && remainingMs <= 0;
   useEffect(() => {
     if (timeUp) void refresh();
   }, [timeUp, refresh]);
@@ -261,9 +312,22 @@ export default function RoomClient({ code }: { code: string }) {
           )}
           {room.state === 'playing' &&
             (view.you?.spectating ? (
-              <LiveDashboard view={view} remainingMs={remainingMs} busy={busy} act={act} />
+              <LiveDashboard
+                view={view}
+                remainingMs={remainingMs}
+                startsInMs={startsInMs}
+                busy={busy}
+                act={act}
+              />
             ) : (
-              <Play view={view} remainingMs={remainingMs} busy={busy} act={act} admin={admin} />
+              <Play
+                view={view}
+                remainingMs={remainingMs}
+                startsInMs={startsInMs}
+                busy={busy}
+                act={act}
+                admin={admin}
+              />
             ))}
           {room.state === 'finished' && <Dashboard view={view} admin={admin} busy={busy} act={act} />}
         </>
@@ -853,12 +917,14 @@ function AdminPanel({
 function Play({
   view,
   remainingMs,
+  startsInMs,
   busy,
   act,
   admin,
 }: {
   view: RoomView;
   remainingMs: number;
+  startsInMs: number;
   busy: boolean;
   act: Act;
   admin: boolean;
@@ -868,6 +934,7 @@ function Play({
   const pct = Math.max(0, Math.min(100, (remainingMs / total) * 100));
   const low = remainingMs <= 10_000;
   const playing = !!view.you?.playing;
+  const gettingReady = startsInMs > 0;
 
   return (
     <>
@@ -891,7 +958,16 @@ function Play({
           <i style={{ width: `${pct}%` }} />
         </div>
 
-        {playing ? (
+        {playing && gettingReady ? (
+          <div className="word-card get-ready">
+            <div>
+              <div className="muted" style={{ fontSize: 15, fontWeight: 700 }}>
+                Get ready…
+              </div>
+              <div className="word countdown">{Math.ceil(startsInMs / 1000)}</div>
+            </div>
+          </div>
+        ) : playing ? (
           <>
             <div className="word-card">
               {card ? (
@@ -944,18 +1020,21 @@ function Play({
 function LiveDashboard({
   view,
   remainingMs,
+  startsInMs,
   busy,
   act,
 }: {
   view: RoomView;
   remainingMs: number;
+  startsInMs: number;
   busy: boolean;
   act: Act;
 }) {
   const { room, scores, log } = view;
   const total = room.settings.durationSec * 1000;
   const pct = Math.max(0, Math.min(100, (remainingMs / total) * 100));
-  const low = remainingMs <= 10_000;
+  const low = startsInMs <= 0 && remainingMs <= 10_000;
+  const gettingReady = startsInMs > 0;
   const playingTeams = scores.round.filter((s) => room.settings.activeTeams.includes(s.team));
   const best = Math.max(0, ...playingTeams.map((s) => s.score));
   const answering = room.players.filter(
@@ -967,7 +1046,9 @@ function LiveDashboard({
       <div className="card">
         <div className="spread">
           <div>
-            <div className={`timer${low ? ' low' : ''}`}>{formatClock(remainingMs)}</div>
+            <div className={`timer${low ? ' low' : ''}`}>
+              {gettingReady ? `Starts in ${Math.ceil(startsInMs / 1000)}` : formatClock(remainingMs)}
+            </div>
             <p className="muted" style={{ margin: '6px 0 0' }}>
               👁 Live scoreboard · {answering} playing · {room.answered} answered
             </p>

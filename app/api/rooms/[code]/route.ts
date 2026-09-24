@@ -10,7 +10,7 @@ import {
   createTeam,
   finishRound,
   getBank,
-  getRoom,
+  getRoomForRead,
   joinRoom,
   joinTeam,
   removePlayer,
@@ -73,7 +73,7 @@ export async function GET(request: Request, ctx: Ctx) {
     const playerId = params.get('playerId');
     const admin = isAdmin(params.get('adminToken'));
 
-    let room = await getRoom(code);
+    let room = await getRoomForRead(code);
     if (!room) throw new HttpError(404, 'Room not found');
 
     const me = playerId ? room.players.find((p) => p.id === playerId) : null;

@@ -6,40 +6,45 @@ import { api } from '@/lib/client';
 
 type Health = {
   ok: boolean;
-  storeDriver: 'redis' | 'file' | 'memory';
+  storeDriver: 'turso' | 'redis' | 'file' | 'memory';
+  shared: boolean;
   durable: boolean;
   storeLocation: string;
-  detected: { url: string | null; token: string | null; looksLikeRedisUrl: boolean };
+  detected: {
+    provider: 'turso' | 'redis' | null;
+    url: string | null;
+    token: string | null;
+    looksLikeRedisUrl: boolean;
+  };
   error: string | null;
 };
 
 const STEPS = [
   {
-    title: 'Create a Redis database',
+    title: 'Create a free Turso database',
     body: (
       <>
-        In your Vercel project, open the <b>Storage</b> tab → <b>Create Database</b> →{' '}
-        <b>Upstash for Redis</b> (the free plan is plenty). Vercel connects it to the project and
-        injects the credentials for you.
+        Sign up at <b>turso.tech</b> (free, no card) and create a database — pick the region
+        closest to your Vercel project. The free plan allows 500 million reads and 10 million
+        writes a month, which this game will not come near.
         <br />
-        Prefer to do it yourself? Create a database at <b>upstash.com</b> and copy its{' '}
-        <b>REST URL</b> and <b>REST token</b> from the database page.
+        Or from Vercel: project → <b>Storage</b> → <b>Create Database</b> → <b>Turso</b>, which
+        connects it and injects the variables for you.
       </>
     ),
   },
   {
-    title: 'Check the environment variables',
+    title: 'Add two environment variables',
     body: (
       <>
-        Project → <b>Settings</b> → <b>Environment Variables</b>. You need a URL and a token, under
-        any of these names:
+        Project → <b>Settings</b> → <b>Environment Variables</b>:
         <br />
-        <code>UPSTASH_REDIS_REST_URL</code> + <code>UPSTASH_REDIS_REST_TOKEN</code>, or{' '}
-        <code>KV_REST_API_URL</code> + <code>KV_REST_API_TOKEN</code>.
+        <code>TURSO_DATABASE_URL</code> — the database URL, starting with <code>libsql://</code>
         <br />
-        The URL must start with <code>https://</code> — a <code>redis://</code> connection string is
-        a different protocol and will not work here. Tick <b>Production</b> (and Preview, if you use
-        it).
+        <code>TURSO_AUTH_TOKEN</code> — a token from the database page (<b>Generate Token</b>)
+        <br />
+        Tick <b>Production</b> (and Preview, if you use it). If Redis variables are also set, Turso
+        takes priority.
       </>
     ),
   },
@@ -48,7 +53,8 @@ const STEPS = [
     body: (
       <>
         Environment variables are read at boot, so a running deployment keeps its old values.
-        Deployments → the latest one → <b>⋯</b> → <b>Redeploy</b>. Then reload this page.
+        Deployments → the latest one → <b>⋯</b> → <b>Redeploy</b>. Then reload this page. Your
+        questions load automatically from <code>data/questions.csv</code> in the repository.
       </>
     ),
   },
@@ -75,7 +81,7 @@ export default function SetupPage() {
 
   const good = !!health?.durable && !!health?.ok;
   // A configured-but-failing store is a different problem from having none.
-  const misconfigured = !!health?.durable && !health.ok;
+  const misconfigured = !!health?.shared && !health.ok;
 
   const headline = good
     ? '✅ Storage is ready'
@@ -106,7 +112,7 @@ export default function SetupPage() {
 
         {health ? (
           <div className="board">
-            <Row label="Driver" value={health.storeDriver} good={health.storeDriver === 'redis'} />
+            <Row label="Driver" value={health.storeDriver} good={health.shared} />
             <Row
               label="Survives a redeploy"
               value={health.durable ? 'yes' : 'no'}
@@ -114,8 +120,8 @@ export default function SetupPage() {
             />
             <Row
               label="Shared between instances"
-              value={health.storeDriver === 'redis' ? 'yes' : 'no'}
-              good={health.storeDriver === 'redis'}
+              value={health.shared ? 'yes' : 'no'}
+              good={health.shared}
             />
             <Row
               label="Live read/write test"
@@ -135,6 +141,15 @@ export default function SetupPage() {
           </div>
         ) : (
           <div className="empty">{checking ? 'Checking…' : 'Could not reach the server.'}</div>
+        )}
+
+        {health?.detected.provider === 'turso' && !health.detected.token && (
+          <div className="err" style={{ marginTop: 14 }}>
+            <code>{health.detected.url}</code> is set but <code>TURSO_AUTH_TOKEN</code> is missing,
+            so the app ignored the database and fell back to {health.storeDriver}. On the Turso
+            database page, <b>Generate Token</b> and add it as <code>TURSO_AUTH_TOKEN</code>, then
+            redeploy.
+          </div>
         )}
 
         {health?.detected.looksLikeRedisUrl && (

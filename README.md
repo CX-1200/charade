@@ -36,118 +36,101 @@ Admin is unlocked on the home page: hit `🔒 Admin`, type the password, and the
 
 ## How a game goes
 
-1. Anyone opens the home page → `📚 Question Bank` → create categories (Animals / Movies / Idioms…) → paste questions in bulk (one per line; commas work too).
+1. An admin opens `📚 Question Bank` and adds categories and questions — typed in on the page, or kept in a spreadsheet and imported as CSV (see [The question bank](#the-question-bank)).
 2. An admin enters their name → `Create room`. They get a 4-character room code and an invite link.
 3. Friends open the same site, type the code (or click the invite link), and enter a name.
 4. **Teams are made inside the room.** The first person in has no team to join, so the room asks them to name one and drops them into it. Everyone after that can join an existing team or start their own.
 5. In the lobby the admin sets the **countdown** (30/60/90/120/180s presets, or anything from 15 to 600 seconds), ticks which **categories** are in play, marks each **team** as In or Out for this round, and chooses whether skipping costs a point.
-6. Admin hits `🚀 Start game` — everyone on an In team plays at once, drawing from the same mixed deck, so **nobody sees the same question twice**. Players on an Out team watch the live scores instead.
+6. Admin hits `🚀 Start game`. Every screen shows **Get ready… 3, 2, 1**, then everyone on an In team plays at once, drawing from the same mixed deck, so **nobody sees the same question twice**. Players on an Out team watch the live scores instead.
 7. When time runs out the round settles automatically (the admin can also end it early). The dashboard shows scores per team, correct/skipped counts, and the full answer log. `🔁 Play again` keeps a running overall total.
 
 Scoring: correct `+1`, skip `0` (the admin can turn on "skips cost 1 point"). Points go to the player's **team**.
 
 ## Scale
 
-Sized for about **50 players plus 10 judges in one room**, and tested at that size against two server instances sharing one Redis — the shape Vercel actually runs, where consecutive requests from the same person land on different instances.
+Sized for about **50 players plus 10 judges in one room**, and tested at that size against two server instances sharing one database — the shape Vercel actually runs, where consecutive requests from the same person land on different instances. Tested on every driver: a real libSQL server over HTTP with JWT auth (what Turso runs), a local libSQL file, Redis, and the single-server file store.
 
-Three things make that work:
+What makes that work:
 
-- **A cross-instance lock.** Every write to a room takes a Redis lock first. Without it two players answering at the same moment read the same room and write back over each other, and one answer silently disappears. The in-process lock alone cannot see other instances.
+- **A cross-instance lock.** Every write to a room takes a lock in the database first. Without it two players answering at the same moment read the same room and write back over each other, and one answer silently disappears. The in-process lock alone cannot see other instances.
 - **Scores are counters, not a replay.** Each answer increments a per-team tally, so scoring is exact however long a round runs. The answer log is display-only and capped, which keeps the room document small (16 KB after 600 answers) instead of growing without bound.
-- **Polls do not write.** Reading a room persists nothing. Presence is refreshed at most every 15 seconds and never during a round, so the hot path is one read.
+- **Polls do not write.** Reading a room persists nothing. Presence is refreshed at most every 15 seconds and never during a round, so the hot path is one read — and polls for the same room on one server share that read for 750 ms.
+- **Each screen polls only as fast as it needs to.** A player mid-round gets their next card back from their own answer and runs the clock locally, so they poll every 5 s just to notice an early finish. The judges' live scoreboard polls every 1.5 s; the lobby and results every 3 s; a hidden tab every 15 s.
+- **A 4-second lead-in.** Because the lobby polls every few seconds, screens learn about a start at different moments. Rounds therefore begin 4 s after the admin presses Start — longer than the slowest poll — and cards are held back until then, so everyone starts answering within a few milliseconds of each other.
 
-Measured at 50 players + 10 judges (see the numbers in the commit history):
+Measured at 50 players + 10 judges, two instances sharing one libSQL server over HTTP:
 
 | | |
 | --- | --- |
-| Human pace (~5 answers/s) | answer p95 **74 ms**, judge poll p95 **25 ms** |
-| Sustained burst (52 answers/s) | 600/600 answers counted, none lost, none rejected |
+| Human pace (~5 answers/s) | answer p95 **64 ms**, judge poll p95 **40 ms** |
+| Sustained burst | 600/600 answers counted, none lost, none rejected |
+| Start of a round | every player able to answer within **54 ms** of each other |
 | Room document | 16 KB with 600 answers recorded |
 
-One thing to watch: a busy game is chatty with Redis. Measured with all 60 browsers polling exactly as the real UI does, a room uses about **3,400 commands a minute in the lobby and 6,300 a minute during a round** — most of it polling. A game night of ~30 minutes in the lobby and ~20 minutes of rounds comes to roughly **230,000 commands**. Upstash's free tier is 500,000 commands a month, so that is about two such evenings a month before you hit the ceiling.
+### Database usage
 
-Free-tier databases are also archived when idle: Upstash after 30 days without activity (data is backed up and restorable), Turso after 10 days (manual unarchive). Keep your questions in a file you can re-import (Export JSON on the Question Bank page) so an archived database never costs you them.
+Measured with all 60 browsers polling exactly as the UI does:
 
-## Run locally
+| | Lobby | During a round |
+| --- | --- | --- |
+| Reads per minute | ~540 | ~940 |
+| Writes per minute | ~390 | ~1,460 |
 
-```bash
-npm install
-npm run dev      # http://localhost:3000
-```
+A game night of ~30 minutes in the lobby and ~20 minutes of rounds is about **35,000 reads and 41,000 writes**.
 
-Other scripts: `npm run build`, `npm run start`, `npm run typecheck`.
+- **Turso free plan** — 500 million reads and 10 million writes a month: roughly **240 such game nights a month** before writes run out. This app will not exhaust it.
+- **Upstash free plan** — 500,000 commands a month, and every read and write is a command: roughly **6 game nights a month**.
 
-## Deploy to Vercel
+### ⚠️ Configure a database for production (important)
 
-```bash
-npm i -g vercel
-vercel            # first deploy — accept the defaults
-vercel --prod     # promote to production
-```
-
-Or push the repo to GitHub and import it at [vercel.com/new](https://vercel.com/new) — Next.js is detected automatically, no build settings to change.
-
-### Set the admin password
-
-`ADMIN_PASSWORD` is an **environment variable** — it is never committed to the repo. Set it in two places:
-
-**Locally** — create a `.env.local` file in the project root (already git-ignored):
-
-```bash
-cp .env.example .env.local
-# then edit .env.local
-ADMIN_PASSWORD=something-only-you-know
-```
-
-Restart `npm run dev` afterwards; Next.js reads `.env.local` at boot.
-
-**On Vercel** — the dashboard, or the CLI:
-
-- *Dashboard*: your project → **Settings** → **Environment Variables** → add `ADMIN_PASSWORD`, tick the environments you want (Production / Preview / Development) → **Save**. Then **redeploy** — running deployments keep the values they were built with.
-- *CLI*: `vercel env add ADMIN_PASSWORD production` (repeat per environment), then `vercel --prod`.
-
-Never put the password in `.env` or any committed file. If it leaks, change it and redeploy: every admin token in circulation stops working immediately, because the signing key is derived from the password.
-
-Optionally set `ADMIN_SECRET` too if you want the signing key to be independent of the password.
-
-**Until you set it, the password is `charade`.** Anyone who knows that can create rooms and edit the question bank, so change it before sharing the link.
-
-### ⚠️ Configure Redis for production (important)
-
-Game state (prompt bank, rooms, scores) goes through a swappable KV layer:
+Rooms, scores and the question bank live behind a swappable key/value layer. The driver is picked automatically, in this order:
 
 | Driver | When it is used | Durable? |
 | --- | --- | --- |
-| `redis` | Upstash / Vercel KV REST credentials are present | ✅ Survives restarts **and** is shared by every serverless instance. The production answer. |
-| `file` | no Redis, but the filesystem is writable (local dev, Docker, any long-lived Node host) | ✅ Survives restarts. Single-server only. |
+| `turso` | `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` are set | ✅ Hosted SQLite, shared by every serverless instance. Free tier large enough that you will never pay. **Recommended.** |
+| `redis` | Upstash / Vercel KV REST credentials are set | ✅ Also shared and durable, but the free tier is tight for busy game nights. |
+| `file` | no database, but the disk is writable (local dev, Docker, a long-lived Node host) | ✅ Survives restarts. One server only. |
 | `memory` | nothing else is available | ❌ Lost on every restart or redeploy. |
 
-The driver is picked automatically in that order. **Vercel's filesystem is read-only**, so a Vercel deploy with no Redis lands on `memory` — rooms and the question bank then reset on every cold start, and requests hitting different instances will see "room not found" or scores that disagree. The Question Bank page tells you which driver is live.
+**Vercel's filesystem is read-only**, so a Vercel deploy with no database lands on `memory`: requests hitting different instances see "no such room", and the question bank resets on every cold start.
 
-**The app has a page for this: open `/setup` on your deployment.** It runs a live read/write test, names which environment variables it found, and walks through the fix. Re-test from the same page after redeploying.
+**Open `/setup` on your deployment.** It runs a live read/write test against the store, names the environment variables it found (names only, never values), and walks through the fix. It also calls out the likely mistakes by name: a wrong or expired token, a URL that cannot be reached, a database URL with no token beside it, and a `redis://` URL where an `https://` REST endpoint belongs.
 
-The fastest route:
+#### Setting up Turso (free, no card)
 
-1. Vercel project → **Storage** → **Create Database** → **Upstash for Redis** (free plan). Vercel connects it and injects the credentials.
-2. Project → **Settings** → **Environment Variables** — confirm a URL and a token are present under `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL` + `KV_REST_API_TOKEN` (`REDIS_REST_*` and `STORAGE_REST_*` are accepted too). The URL must be the **`https://` REST endpoint** — a `redis://` connection string is a different protocol and will not work.
-3. **Redeploy.** Variables are read at boot, so a running deployment keeps its old values.
+1. Sign up at [turso.tech](https://turso.tech) and create a database in the region closest to your Vercel project. (Or from Vercel: project → **Storage** → **Create Database** → **Turso**, which injects the variables for you.)
+2. Vercel project → **Settings** → **Environment Variables**:
+   - `TURSO_DATABASE_URL` — the database URL, starting with `libsql://`
+   - `TURSO_AUTH_TOKEN` — from the database page, **Generate Token**
+3. **Redeploy** — variables are read at boot. Then check `/setup`.
 
-Doing it by hand instead: create the database at [upstash.com](https://upstash.com) and copy its REST URL and REST token from the database page into those variables.
+The database's tables are created on first use, and the question bank loads itself from the repository copy (below), so there is nothing else to set up. If Redis variables are also set, Turso takes priority, so you can switch by adding the two variables.
 
-`/api/health` returns the same information as JSON, including the result of a real round-trip against the store — so a wrong token shows up as a clear failure rather than as 500s mid-game.
+#### Keep the free database awake
 
-### The question bank is a database, not a fixture
+Free tiers archive databases nobody touches — Turso after 10 days, Upstash after 30 — and Turso does not wake up on its own: the app would be down until you unarchive it by hand. `vercel.json` registers a daily Vercel Cron job that calls `/api/keepalive`, which does one real read and write, so the database never counts as idle.
 
-Once an admin builds the bank it stays put: it is stored under its own key and is never re-seeded. The three starter categories only appear when the store is completely empty, and deleting them is permanent — they do not grow back.
+Set `CRON_SECRET` in Vercel's environment variables (any long random string). Vercel then sends it with the cron request and the endpoint refuses everyone else, so strangers cannot spend your free-tier writes.
 
-Whether that survives a **restart** depends on the driver above. On Vercel that means: configure Redis, or the bank resets on every cold start.
+#### Moving your questions from Upstash to Turso
 
-Either way the Question Bank page has **Export JSON** / **Import JSON**:
+Before switching: on the current deployment, Question Bank → **Export CSV**, and upload it over `data/questions.csv` in the repository. After adding the Turso variables and redeploying, the new, empty database loads that file automatically.
 
-- *Export* downloads the whole bank as a portable file — a backup, or a way to move a set of questions to another deployment.
-- *Import* asks whether to **replace** the bank with the file or **merge** it in. Merging never duplicates: a category that already exists is topped up, and questions already present are skipped.
+### The question bank
 
-The import is liberal about shape (each category's `items` may be plain strings or `{ "text": … }` objects, ids are regenerated) and validates before writing, so a malformed file is rejected without touching what you already have.
+**Day to day, edit on the site.** Question Bank → add categories and questions. Changes are live immediately — no deploy.
+
+**Or edit in a spreadsheet.** **Export CSV** gives a file with two columns, `category` and `question`, one question per row, that opens cleanly in Excel, Numbers or Google Sheets. Edit it and **Import CSV**: you see how many questions and categories are in the file before anything is written, then choose **Merge in** (adds what is new, never duplicates) or **Replace everything**. The import copes with what spreadsheets actually produce — a byte-order mark, `;` or tab separators, quoted cells with commas, blank rows, columns in any order, headers in English or Chinese (`分类` / `题目`), or no header at all.
+
+**The permanent copy lives in the repository** as `data/questions.csv`. It ships with every deploy, and:
+
+- **An empty database loads it automatically** — a fresh Turso database, one restored after archiving, a move between providers.
+- **Deploys never overwrite the questions you edit on the site.** The stored bank always wins; the file is only read when the database has no bank at all. This is deliberate: it is what stops an update from wiping your questions.
+- **Restore from repository** (on the Question Bank page) loads it on demand — replacing the bank, or merging into it.
+
+To update the permanent copy: **Export CSV**, then on GitHub open `data/questions.csv` and upload the new file over it. Git keeps every earlier version, so a bad edit can always be rolled back.
+
+Older JSON exports still import.
 
 Local runs keep the file store in `.data/charade.json` (git-ignored). Point `CHARADE_DATA_DIR` somewhere else to move it, or set `CHARADE_DISABLE_FILE_STORE=1` to force the memory driver.
 
@@ -163,18 +146,26 @@ app/
   questions/page.tsx         Question Bank: categories and questions
   room/[code]/page.tsx       Room page (team gate / lobby / play / dashboard)
   room/[code]/RoomClient.tsx All room interaction and polling
+  rooms/page.tsx             Manage rooms (admin)
+  setup/page.tsx             Live storage diagnosis and setup steps
   api/admin/route.ts         Password → signed admin token
-  api/bank/route.ts          Question bank read/write
+  api/admin/rooms/route.ts   List and close rooms (admin)
+  api/bank/route.ts          Question bank read/write, CSV import, restore from repo
   api/rooms/route.ts         Create a room (admin only)
   api/rooms/[code]/route.ts  Room polling + every room action
-  api/health/route.ts        Which store driver is active
+  api/health/route.ts        Which store driver is active, plus a live round-trip
+  api/keepalive/route.ts     Daily touch so a free database is never archived
 lib/
   rules.ts                   Pure game rules, no storage
-  game.ts                    Store-backed layer over rules (bank + room persistence)
+  game.ts                    Store-backed layer over rules (bank, rooms, repo backup)
+  csv.ts                     Spreadsheet import/export, shared by browser and server
   admin.ts                   Password check and HMAC-signed admin tokens
-  store.ts                   KV store (redis / file / memory drivers + in-process write lock)
+  store.ts                   KV store: turso / redis / file / memory drivers + locking
   serialize.ts               The room view sent to clients (the deck never leaves the server)
   types.ts, ui.ts, client.ts Types, shared constants, fetch helpers
+data/
+  questions.csv              The question bank's permanent copy
+vercel.json                  The daily keep-alive cron
 ```
 
-Sync is plain HTTP polling (~0.9s during a round, ~1.6s in the lobby) — no WebSockets, so it runs as-is on Vercel's serverless runtime.
+Sync is plain HTTP polling — no WebSockets, so it runs as-is on Vercel's serverless runtime.

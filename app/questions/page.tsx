@@ -3,10 +3,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
+import { parseQuestionsCsv, toQuestionsCsv } from '@/lib/csv';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 import type { Bank } from '@/lib/types';
 
-type Storage = { driver: 'redis' | 'file' | 'memory'; durable: boolean };
+type Storage = { driver: 'turso' | 'redis' | 'file' | 'memory'; durable: boolean; shared?: boolean };
+type Backup = { path: string; categories: number; questions: number } | null;
+type Report = { rows: number; skipped: number; categories: number } | null;
+
+/** A file the admin picked, parsed in the browser so they see it before it lands. */
+type PendingImport = {
+  fileName: string;
+  kind: 'csv' | 'json';
+  text: string;
+  categories: number;
+  questions: number;
+  skipped: number;
+};
+
+const STORE_LABEL: Record<Storage['driver'], string> = {
+  turso: 'Turso',
+  redis: 'Redis',
+  file: 'a file on this server',
+  memory: 'this server’s memory',
+};
 
 /**
  * Demo mode is gone, but a browser that ran one may still hold the bank it
@@ -33,7 +53,7 @@ function clearDemoBank(): void {
     /* nothing to clear */
   }
 }
-type BankResponse = { bank: Bank; storage?: Storage };
+type BankResponse = { bank: Bank; storage?: Storage; backup?: Backup; report?: Report };
 
 export default function QuestionsPage() {
   const [admin, setAdmin] = useAdmin();
@@ -42,10 +62,13 @@ export default function QuestionsPage() {
   const [newCategory, setNewCategory] = useState('');
   const [draft, setDraft] = useState('');
   const [storage, setStorage] = useState<Storage | null>(null);
+  const [backup, setBackup] = useState<Backup>(null);
+  const [pending, setPending] = useState<PendingImport | null>(null);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const lastReport = useRef<Report>(null);
   // A bank left behind by the old demo mode, if this browser ran one.
   const [strandedBank, setStrandedBank] = useState<Bank | null>(null);
 
@@ -64,6 +87,7 @@ export default function QuestionsPage() {
       .then((data) => {
         setBank(data.bank);
         setStorage(data.storage ?? null);
+        setBackup(data.backup ?? null);
       })
       .catch((e) => setError((e as Error).message));
   }, []);
@@ -78,6 +102,8 @@ export default function QuestionsPage() {
       });
       setBank(data.bank);
       if (data.storage) setStorage(data.storage);
+      if (data.backup !== undefined) setBackup(data.backup);
+      lastReport.current = data.report ?? null;
       return data.bank;
     } catch (e) {
       setError((e as Error).message);
@@ -98,41 +124,90 @@ export default function QuestionsPage() {
     }
   }
 
-  function exportBank() {
+  /** Opens in Excel, Numbers or Google Sheets, and is exactly what the repo backup expects. */
+  function exportCsv() {
     if (!bank) return;
-    const payload = {
-      format: 'charade-question-bank',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      categories: bank.categories.map((c) => ({
-        name: c.name,
-        color: c.color,
-        items: c.items.map((i) => i.text),
-      })),
-    };
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+    const csv = toQuestionsCsv(
+      bank.categories.map((c) => ({ name: c.name, items: c.items.map((i) => i.text) })),
     );
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `charade-question-bank-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = 'questions.csv';
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  async function importBank(file: File, mode: 'merge' | 'replace') {
+  /** Reads the chosen file and shows what is in it; nothing is written yet. */
+  async function pickFile(file: File) {
+    setError('');
     setNote('');
+    const text = await file.text();
+    const kind = /\.json$/i.test(file.name) ? 'json' : 'csv';
     try {
-      const data = JSON.parse(await file.text());
-      const next = await mutate({ action: 'import', data, mode });
-      if (next) {
-        const total = next.categories.reduce((sum, c) => sum + c.items.length, 0);
-        setNote(
-          `Imported — the bank now holds ${next.categories.length} categories and ${total} questions.`,
-        );
+      if (kind === 'json') {
+        // Older exports were JSON; they still import.
+        const data = JSON.parse(text) as { categories?: Array<{ items?: unknown[] }> };
+        const cats = Array.isArray(data.categories) ? data.categories : [];
+        if (!cats.length) throw new Error('That file is not a question bank export');
+        setPending({
+          fileName: file.name,
+          kind,
+          text,
+          categories: cats.length,
+          questions: cats.reduce((sum, c) => sum + (Array.isArray(c.items) ? c.items.length : 0), 0),
+          skipped: 0,
+        });
+        return;
       }
+      const parsed = parseQuestionsCsv(text);
+      if (!parsed.categories.length) {
+        throw new Error('No questions found — the file needs a category column and a question column');
+      }
+      setPending({
+        fileName: file.name,
+        kind,
+        text,
+        categories: parsed.categories.length,
+        questions: parsed.rows,
+        skipped: parsed.skipped,
+      });
     } catch (e) {
       setError(e instanceof SyntaxError ? 'That file is not valid JSON' : (e as Error).message);
+    }
+  }
+
+  async function confirmImport(mode: 'merge' | 'replace') {
+    if (!pending) return;
+    const next = await mutate(
+      pending.kind === 'csv'
+        ? { action: 'importCsv', csv: pending.text, mode }
+        : { action: 'import', data: JSON.parse(pending.text), mode },
+    );
+    if (next) {
+      setPending(null);
+      const total = next.categories.reduce((sum, c) => sum + c.items.length, 0);
+      const skipped = lastReport.current?.skipped ?? 0;
+      setNote(
+        `${mode === 'replace' ? 'Replaced' : 'Merged'} — the bank now holds ${next.categories.length} categories and ${total} questions` +
+          (skipped ? ` (${skipped} empty ${skipped === 1 ? 'row was' : 'rows were'} skipped)` : '') +
+          '.',
+      );
+    }
+  }
+
+  async function restoreFromRepo(mode: 'replace' | 'merge') {
+    const warning =
+      mode === 'replace'
+        ? 'Replace the whole bank with the copy saved in the repository? Questions added on this site since then are removed.'
+        : 'Merge the repository copy into the current bank? Nothing is removed.';
+    if (!confirm(warning)) return;
+    const next = await mutate({ action: 'restoreFromRepo', mode });
+    if (next) {
+      const total = next.categories.reduce((sum, c) => sum + c.items.length, 0);
+      setNote(
+        `Restored from the repository — the bank now holds ${next.categories.length} categories and ${total} questions.`,
+      );
     }
   }
 
@@ -250,39 +325,105 @@ This browser still holds the bank it built back when demo mode existed —{' '}
       )}
 
       <div className="card">
-        <div className="spread" style={{ marginBottom: 12 }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Backup</h2>
-            <p className="muted">
-              {storage?.durable
-                ? `Saved in ${storage.driver === 'redis' ? 'Redis' : 'a file on the server'} — it survives restarts and redeploys.`
-                : 'Stored in memory on this server: a restart or redeploy wipes it. Export a copy, and see the README on configuring Redis.'}
-            </p>
+        <h2>Spreadsheet &amp; backup</h2>
+        <p className="muted" style={{ margin: '0 0 14px' }}>
+          {storage
+            ? storage.shared
+              ? `Saved in ${STORE_LABEL[storage.driver]} — shared by every server and kept across deploys.`
+              : storage.durable
+                ? `Saved in ${STORE_LABEL[storage.driver]} — kept across restarts on this one server.`
+                : `Held in ${STORE_LABEL[storage.driver]} only — a restart loses it. Keep a CSV copy.`
+            : 'Checking where the bank is stored…'}
+        </p>
+
+        <div className="section">
+          <h3>Edit in a spreadsheet</h3>
+          <p className="muted" style={{ margin: '0 0 10px' }}>
+            Two columns — <b>category</b> and <b>question</b>, one question per row. Export, edit in
+            Excel or Google Sheets, then import it back.
+          </p>
+          <div className="row tight">
+            <button className="btn sm" onClick={exportCsv} disabled={!bank}>
+              ⬇ Export CSV
+            </button>
+            <button className="btn sm" onClick={() => fileInput.current?.click()} disabled={busy}>
+              ⬆ Import CSV
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".csv,text/csv,.json,application/json"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) void pickFile(file);
+              }}
+            />
           </div>
+
+          {pending && (
+            <div className="notice" style={{ marginTop: 12 }}>
+              <b>{pending.fileName}</b> — {pending.questions}{' '}
+              {pending.questions === 1 ? 'question' : 'questions'} in {pending.categories}{' '}
+              {pending.categories === 1 ? 'category' : 'categories'}
+              {pending.skipped
+                ? `, ${pending.skipped} empty ${pending.skipped === 1 ? 'row' : 'rows'} will be skipped`
+                : ''}
+              .
+              <div className="row tight" style={{ marginTop: 10 }}>
+                <button
+                  className="btn sm primary"
+                  disabled={busy}
+                  onClick={() => confirmImport('merge')}
+                  title="Keeps everything already here and adds what is new"
+                >
+                  Merge in
+                </button>
+                <button
+                  className="btn sm"
+                  disabled={busy}
+                  onClick={() =>
+                    confirm('Replace the whole bank with this file? Anything not in it is removed.') &&
+                    confirmImport('replace')
+                  }
+                >
+                  Replace everything
+                </button>
+                <button className="btn sm ghost" disabled={busy} onClick={() => setPending(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="row tight">
-          <button className="btn sm" onClick={exportBank} disabled={!bank}>
-            ⬇ Export JSON
-          </button>
-          <button className="btn sm" onClick={() => fileInput.current?.click()} disabled={busy}>
-            ⬆ Import JSON
-          </button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept="application/json,.json"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (!file) return;
-              const replace = confirm(
-                'OK — replace the whole bank with this file.\n\n' +
-                  'Cancel — merge it into what is already here.',
-              );
-              void importBank(file, replace ? 'replace' : 'merge');
-            }}
-          />
+
+        <div className="section">
+          <h3>Permanent copy in the repository</h3>
+          <p className="muted" style={{ margin: '0 0 10px' }}>
+            {backup
+              ? `${backup.path} holds ${backup.categories} categories and ${backup.questions} questions. `
+              : 'No backup file found in the repository yet. '}
+            It ships with every deploy, and an empty database loads it automatically. To update it,
+            export CSV and upload the file over <code>{backup?.path ?? 'data/questions.csv'}</code>{' '}
+            on GitHub. Deploys never overwrite the questions you edit here.
+          </p>
+          <div className="row tight">
+            <button
+              className="btn sm"
+              disabled={busy || !backup}
+              onClick={() => restoreFromRepo('replace')}
+            >
+              ↺ Restore from repository
+            </button>
+            <button
+              className="btn sm ghost"
+              disabled={busy || !backup}
+              onClick={() => restoreFromRepo('merge')}
+            >
+              Merge repository copy in
+            </button>
+          </div>
         </div>
       </div>
 

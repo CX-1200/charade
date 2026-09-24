@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { kvDel, kvGet, kvSet, kvSetAdd, kvSetMembers, kvSetRemove, withLock } from './store';
 import { HttpError } from './errors';
-import { makeRoom, roomCode, seedBank, settle } from './rules';
+import { parseQuestionsCsv } from './csv';
+import { CATEGORY_COLORS } from './ui';
+import { id, makeRoom, roomCode, seedBank, settle } from './rules';
 import type { Bank, Room } from './types';
 
 /** Pure game rules live in ./rules so they stay independent of storage. */
@@ -15,12 +19,78 @@ const roomKey = (code: string) => `charade:room:${code.toUpperCase()}`;
 /** Rooms this process has already put in the index — saves a write per save. */
 const indexed = new Set<string>();
 
+/**
+ * Polls are most of the traffic: 60 browsers checking in every second or two.
+ * Within one server instance, polls for the same room inside this window share
+ * a single store read. Writes go through the cache, so a player always sees
+ * their own answer; another instance's write shows up within the window.
+ */
+const READ_CACHE_MS = 750;
+const readCache = new Map<string, { room: Room; at: number }>();
+
+function remember(room: Room): void {
+  readCache.set(room.code.toUpperCase(), { room: structuredClone(room), at: Date.now() });
+}
+
+/** For read-only views. Anything that writes must use withRoom instead. */
+export async function getRoomForRead(code: string): Promise<Room | null> {
+  const key = code.toUpperCase();
+  const hit = readCache.get(key);
+  if (hit && Date.now() - hit.at < READ_CACHE_MS) return structuredClone(hit.room);
+  const room = await getRoom(key);
+  if (room) remember(room);
+  else readCache.delete(key);
+  return room;
+}
+
+/* ------------------------------------------------------------ repo backup */
+
+/**
+ * The question bank's permanent copy lives in the repository as a CSV. It is
+ * bundled with every deployment (see outputFileTracingIncludes), so whatever
+ * happens to the database — a fresh Turso instance, an archived free tier, a
+ * move between providers — the questions come back from here.
+ */
+export const REPO_BACKUP_PATH = 'data/questions.csv';
+
+export function readRepoBackup() {
+  try {
+    const text = readFileSync(join(process.cwd(), REPO_BACKUP_PATH), 'utf8');
+    const parsed = parseQuestionsCsv(text);
+    return parsed.categories.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function bankFromRepo(): Bank | null {
+  const backup = readRepoBackup();
+  if (!backup) return null;
+  const now = Date.now();
+  return {
+    categories: backup.categories.map((category, index) => ({
+      id: id('cat'),
+      name: category.name,
+      color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
+      createdAt: now + index,
+      items: category.items.map((text, i) => ({ id: id('q'), text, createdAt: now + i })),
+    })),
+    updatedAt: now,
+  };
+}
+
 /* ------------------------------------------------------------------ bank */
 
+/**
+ * The stored bank always wins. Only an empty store — never a deploy — loads
+ * the repository copy, so editing questions on the site and then shipping new
+ * code can never wipe those edits. Restoring from the repo is a deliberate
+ * admin action (restoreFromRepo in the bank route).
+ */
 export async function getBank(): Promise<Bank> {
   const stored = await kvGet<Bank>(BANK_KEY);
   if (stored?.categories) return stored;
-  const fresh = seedBank();
+  const fresh = bankFromRepo() ?? seedBank();
   await kvSet(BANK_KEY, fresh);
   return fresh;
 }
@@ -50,6 +120,7 @@ export async function getRoom(code: string): Promise<Room | null> {
 export async function saveRoom(room: Room): Promise<Room> {
   room.updatedAt = Date.now();
   await kvSet(roomKey(room.code), room);
+  remember(room);
   // Idempotent, and it heals the index for rooms this instance has not seen —
   // but only once per room per process, since saves are the hot path.
   if (!indexed.has(room.code)) {
@@ -66,6 +137,7 @@ export async function closeRoom(code: string): Promise<boolean> {
   await kvDel(roomKey(upper));
   await kvSetRemove(ROOM_INDEX_KEY, upper);
   indexed.delete(upper);
+  readCache.delete(upper);
   return existed;
 }
 

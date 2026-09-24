@@ -28,6 +28,7 @@ export function publicRoom(
       startedAt: room.startedAt,
       endsAt: room.endsAt,
       remainingMs: room.endsAt ? Math.max(0, room.endsAt - now) : 0,
+      startsInMs: room.startedAt ? Math.max(0, room.startedAt - now) : 0,
       answered: room.log.length,
       deckSize: room.deck.length,
       promptCount: opts.bank ? countPrompts(opts.bank, room.settings.categoryIds) : null,
@@ -43,7 +44,8 @@ export function publicRoom(
       /** An admin with no team watches instead of answering. */
       spectating: !you.team && !!opts.admin,
     },
-    card: you ? room.current[you.id] ?? null : null,
+    // Held back during the lead-in so nobody reads their card before "go".
+    card: you && !(room.startedAt && now < room.startedAt) ? (room.current[you.id] ?? null) : null,
     myStats: you
       ? {
           correct: room.log.filter((l) => l.playerId === you.id && l.result === 'correct').length,

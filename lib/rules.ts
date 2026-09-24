@@ -22,6 +22,15 @@ export { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
  */
 export const MAX_LOG_ENTRIES = 200;
 
+/**
+ * A round starts this long after the admin presses Start. Screens learn about
+ * the start by polling, and the lobby polls every few seconds, so without a
+ * lead-in whoever polled last would lose seconds of their round. The lead-in
+ * is longer than the slowest lobby poll, so everyone sees "3, 2, 1" and starts
+ * answering at the same instant.
+ */
+export const LEAD_IN_MS = 4000;
+
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const MAX_TEAMS = TEAM_COLORS.length;
 
@@ -370,21 +379,24 @@ export function startRound(room: Room, deck: DeckEntry[]): void {
   // Starting while a round is live must not silently drop that round's scores.
   if (room.state === 'playing') finishRound(room);
 
-  const now = Date.now();
+  const startsAt = Date.now() + LEAD_IN_MS;
   room.deck = deck;
   room.cursor = 0;
   room.current = {};
   room.log = [];
   room.tally = {};
   room.state = 'playing';
-  room.startedAt = now;
-  room.endsAt = now + room.settings.durationSec * 1000;
+  room.startedAt = startsAt;
+  room.endsAt = startsAt + room.settings.durationSec * 1000;
   for (const player of playing) room.current[player.id] = drawCard(room);
 }
 
 export function answer(room: Room, playerId: string, result: AnswerResult): void {
   settle(room);
   if (room.state !== 'playing') throw new HttpError(409, 'The round is not running');
+  if (room.startedAt && Date.now() < room.startedAt) {
+    throw new HttpError(409, 'The round has not started yet');
+  }
   const player = requirePlayer(room, playerId);
   if (!player.team) throw new HttpError(403, 'You are watching this round, not playing');
   if (!isTeamActive(room, player.team)) {
