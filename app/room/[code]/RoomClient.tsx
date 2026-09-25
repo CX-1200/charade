@@ -3,12 +3,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, formatClock, post, session, type ApiError } from '@/lib/client';
-import { DURATION_PRESETS, MAX_DURATION, MIN_DURATION, teamColor } from '@/lib/ui';
+import {
+  api,
+  authHeaders,
+  formatClock,
+  formatElapsed,
+  ordinal,
+  post,
+  roomAuth,
+  session,
+  type ApiError,
+} from '@/lib/client';
+import {
+  DURATION_PRESETS,
+  MAX_DURATION,
+  MIN_DURATION,
+  streakMilestone,
+  streakTier,
+  teamColor,
+} from '@/lib/ui';
 import type { RoomView } from '@/lib/serialize';
 import type { Bank } from '@/lib/types';
 
-type ViewResponse = RoomView & { playerId?: string | null };
+type ViewResponse = RoomView & { playerId?: string | null; secret?: string };
 type Storage = { driver: string; durable: boolean };
 
 const storageOf = (error: ApiError): Storage | null =>
@@ -59,12 +76,9 @@ export default function RoomClient({ code }: { code: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      const pid = session.getPlayerId(code);
-      const token = session.getAdminToken();
-      const query = new URLSearchParams();
-      if (pid) query.set('playerId', pid);
-      if (token) query.set('adminToken', token);
-      const data = await api<RoomView>(`/api/rooms/${code}?${query}`);
+      const data = await api<RoomView>(`/api/rooms/${code}`, {
+        headers: authHeaders(code),
+      });
       missesRef.current = 0;
       applyView(data);
       setError('');
@@ -75,7 +89,7 @@ export default function RoomClient({ code }: { code: string }) {
         if (hint) setStorage(hint);
         missesRef.current += 1;
         if (missesRef.current >= 2) {
-          session.clearPlayerId(code);
+          session.clearSeat(code);
           setClosed(true);
         }
         return; // stay put and retry on the next poll
@@ -133,10 +147,10 @@ export default function RoomClient({ code }: { code: string }) {
       try {
         const data = await post<ViewResponse>(`/api/rooms/${code}`, {
           ...body,
-          playerId: session.getPlayerId(code),
-          adminToken: session.getAdminToken(),
+          ...roomAuth(code),
         });
-        if (data.playerId) session.setPlayerId(code, data.playerId);
+        // Only a join hands out a secret; it is shown to this browser alone.
+        if (data.secret) session.setSeat(code, data);
         applyView(data);
         setError('');
         return data;
@@ -169,11 +183,10 @@ export default function RoomClient({ code }: { code: string }) {
     try {
       await post(`/api/rooms/${code}`, {
         action: 'leave',
-        playerId: session.getPlayerId(code),
-        adminToken: session.getAdminToken(),
+        ...roomAuth(code),
       }).catch(() => undefined);
     } finally {
-      session.clearPlayerId(code);
+      session.clearSeat(code);
       router.push('/');
     }
   }, [code, router]);
@@ -301,14 +314,7 @@ export default function RoomClient({ code }: { code: string }) {
       ) : (
         <>
           {room.state === 'lobby' && (
-            <Lobby
-              view={view}
-              bank={bank}
-              busy={busy}
-              act={act}
-              code={code}
-              admin={admin}
-            />
+            <Lobby view={view} bank={bank} busy={busy} act={act} code={code} admin={admin} />
           )}
           {room.state === 'playing' &&
             (view.you?.spectating ? (
@@ -329,7 +335,9 @@ export default function RoomClient({ code }: { code: string }) {
                 admin={admin}
               />
             ))}
-          {room.state === 'finished' && <Dashboard view={view} admin={admin} busy={busy} act={act} />}
+          {room.state === 'finished' && (
+            <Dashboard view={view} admin={admin} busy={busy} act={act} />
+          )}
         </>
       )}
 
@@ -337,8 +345,8 @@ export default function RoomClient({ code }: { code: string }) {
         Room {code} ·{' '}
         {admin && (
           <>
-            <Link href="/questions">Question Bank</Link> ·{' '}
-            <Link href="/rooms">Manage rooms</Link> ·{' '}
+            <Link href="/questions">Question Bank</Link> · <Link href="/rooms">Manage rooms</Link>{' '}
+            ·{' '}
           </>
         )}
         <Link href="/">Home</Link>
@@ -594,7 +602,12 @@ function Lobby({
               <div className="player-pill">
                 <span className="status" />
                 {view.you?.name}
-                <span style={{ color: teamColor(room.teams, view.you?.team ?? ''), fontSize: 12 }}>
+                <span
+                  style={{
+                    color: teamColor(room.teams, view.you?.team ?? ''),
+                    fontSize: 12,
+                  }}
+                >
                   {view.you?.team}
                 </span>
               </div>
@@ -655,7 +668,12 @@ function Lobby({
                 <span className={`status${player.online ? '' : ' off'}`} />
                 {player.name}
                 {player.isHost && ' 👑'}
-                <span style={{ color: teamColor(room.teams, player.team), fontSize: 12 }}>
+                <span
+                  style={{
+                    color: teamColor(room.teams, player.team),
+                    fontSize: 12,
+                  }}
+                >
                   {player.team || (player.id === room.hostId ? 'watching' : 'no team')}
                 </span>
                 {admin && player.id !== view.you?.id && (
@@ -849,7 +867,8 @@ function AdminPanel({
                 <span className="grow">
                   <b>{team}</b>
                   <span className="muted">
-                    {size} {size === 1 ? 'player' : 'players'} · {active ? 'playing' : 'sitting out'}
+                    {size} {size === 1 ? 'player' : 'players'} ·{' '}
+                    {active ? 'playing' : 'sitting out'}
                   </span>
                 </span>
                 <button
@@ -873,7 +892,9 @@ function AdminPanel({
               </div>
             );
           })}
-          {!room.teams.length && <div className="empty">No teams yet — players create their own.</div>}
+          {!room.teams.length && (
+            <div className="empty">No teams yet — players create their own.</div>
+          )}
         </div>
       </div>
 
@@ -914,6 +935,153 @@ function AdminPanel({
   );
 }
 
+type RaceTeam = RoomView['race']['teams'][number];
+type LogRow = RoomView['log'][number];
+
+/** How long a big moment (a streak tier, a team finishing) stays up top. */
+const HYPE_MS = 6000;
+
+function StreakBadge({ streak }: { streak: number }) {
+  const tier = streakTier(streak);
+  if (!tier) return null;
+  return (
+    <span className="streak">
+      {tier.emoji} {tier.label} ×{streak}
+    </span>
+  );
+}
+
+/** Shown once a team has answered everything — the round carries on for the rest. */
+function WinnerBanner({ view, hideFor }: { view: RoomView; hideFor?: string }) {
+  const { race, room } = view;
+  if (!race.winner || race.winner === hideFor) return null;
+  const first = race.teams.find((t) => t.team === race.winner);
+  const racing = race.teams.filter((t) => !t.finishedAt).length;
+  return (
+    <div className="win-banner">
+      🏆 <b>{race.winner}</b> finished first
+      {first ? ` in ${formatElapsed(first.elapsedMs)}` : ''}!
+      {room.state === 'playing' && racing > 0 && (
+        <>
+          {' '}
+          {racing} {racing === 1 ? 'team is' : 'teams are'} still racing — keep going!
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Every racing team's progress. Never shows a question: this is a public screen. */
+function RaceGrid({ view }: { view: RoomView }) {
+  const { race, room, scores } = view;
+  const unfinished = race.teams.filter((t) => !t.finishedAt);
+  const best = Math.max(0, ...unfinished.map((t) => t.done));
+  return (
+    <div className="live-grid">
+      {race.teams.map((t) => {
+        const done = !!t.finishedAt;
+        const lead = !done && best > 0 && t.done === best;
+        const row = scores.round.find((s) => s.team === t.team);
+        const pct = t.total ? (t.done / t.total) * 100 : 0;
+        return (
+          <div key={t.team} className={`live-card${done ? ' done' : lead ? ' lead' : ''}`}>
+            <div className="team">
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  background: done || lead ? 'var(--cream)' : teamColor(room.teams, t.team),
+                }}
+              />
+              {t.team}
+            </div>
+            <div className="num">
+              {done && t.place === 1 ? '🏆' : t.done}
+              {!(done && t.place === 1) && <small>/{t.total}</small>}
+            </div>
+            <div className="mini-progress">
+              <i style={{ width: `${pct}%` }} />
+            </div>
+            <div className="detail">
+              {done
+                ? `🏁 ${ordinal(t.place ?? 0)} · all ${t.total} in ${formatElapsed(t.elapsedMs)}`
+                : `${row?.skipped ?? 0} skipped · ${row?.players.length ?? 0} ${row?.players.length === 1 ? 'player' : 'players'}`}
+            </div>
+            {!done && <StreakBadge streak={t.streak} />}
+          </div>
+        );
+      })}
+      {!race.teams.length && <div className="empty">No teams are racing this round.</div>}
+    </div>
+  );
+}
+
+function isBigMoment(entry: LogRow): boolean {
+  return !!entry.finished || (entry.result === 'correct' && !!streakMilestone(entry.streak));
+}
+
+/** One feed line. Deliberately says who scored, never what the word was. */
+function FeedRow({ entry, view }: { entry: LogRow; view: RoomView }) {
+  const { room, race } = view;
+  const color = teamColor(room.teams, entry.team);
+  if (entry.finished) {
+    const took = race.startedAt ? formatElapsed(entry.at - race.startedAt) : '';
+    return (
+      <div className="ticker-row finish">
+        <span>
+          🏁 <b>{entry.team}</b> answered every question!
+        </span>
+        <span>{took}</span>
+      </div>
+    );
+  }
+  const milestone = entry.result === 'correct' ? streakMilestone(entry.streak) : null;
+  if (milestone) {
+    return (
+      <div className="ticker-row big">
+        <span>
+          {milestone.emoji} <b style={{ color }}>{entry.team}</b> is {milestone.label}
+        </span>
+        <span>{entry.streak} in a row</span>
+      </div>
+    );
+  }
+  if (entry.result === 'skip') {
+    return (
+      <div className="ticker-row quiet">
+        <span>
+          {entry.playerName} ({entry.team}) skipped
+        </span>
+        <span>⏭</span>
+      </div>
+    );
+  }
+  return (
+    <div className="ticker-row">
+      <span>
+        <b style={{ color }}>{entry.playerName}</b> scored for {entry.team}
+      </span>
+      <span className="res correct">✓</span>
+    </div>
+  );
+}
+
+/** The latest streak tier or finish, splashed across the top for a few seconds. */
+function Hype({ view }: { view: RoomView }) {
+  const latest = view.log.find(isBigMoment);
+  if (!latest || view.now - latest.at > HYPE_MS) return null;
+  if (latest.finished) {
+    return <div className="hype">🏁 {latest.team} finished every question!</div>;
+  }
+  const milestone = streakMilestone(latest.streak)!;
+  return (
+    <div className="hype" key={`${latest.team}-${latest.at}`}>
+      {milestone.emoji} {latest.team} is {milestone.label} {milestone.emoji}
+    </div>
+  );
+}
+
 function Play({
   view,
   remainingMs,
@@ -929,12 +1097,14 @@ function Play({
   act: Act;
   admin: boolean;
 }) {
-  const { room, card, myStats } = view;
+  const { room, card, myStats, race } = view;
   const total = room.settings.durationSec * 1000;
   const pct = Math.max(0, Math.min(100, (remainingMs / total) * 100));
   const low = remainingMs <= 10_000;
   const playing = !!view.you?.playing;
   const gettingReady = startsInMs > 0;
+  const mine: RaceTeam | undefined = race.teams.find((t) => t.team === view.you?.team);
+  const finished = !!mine?.finishedAt;
 
   return (
     <>
@@ -944,7 +1114,7 @@ function Play({
             <div className={`timer${low ? ' low' : ''}`}>{formatClock(remainingMs)}</div>
             <p className="muted" style={{ margin: '6px 0 0' }}>
               {playing
-                ? `${view.you?.team} · ${myStats?.correct ?? 0} correct · ${myStats?.skipped ?? 0} skipped`
+                ? `${view.you?.team} · you: ${myStats?.correct ?? 0} correct · ${myStats?.skipped ?? 0} skipped`
                 : 'Your team is sitting this round out'}
             </p>
           </div>
@@ -958,6 +1128,8 @@ function Play({
           <i style={{ width: `${pct}%` }} />
         </div>
 
+        <WinnerBanner view={view} hideFor={view.you?.team} />
+
         {playing && gettingReady ? (
           <div className="word-card get-ready">
             <div>
@@ -965,6 +1137,18 @@ function Play({
                 Get ready…
               </div>
               <div className="word countdown">{Math.ceil(startsInMs / 1000)}</div>
+            </div>
+          </div>
+        ) : playing && finished && mine ? (
+          <div className="word-card get-ready">
+            <div>
+              <div className="word" style={{ fontSize: 34 }}>
+                {mine.place === 1 ? '🏆 You won the race!' : '🏁 Your team finished!'}
+              </div>
+              <p className="sub" style={{ margin: '8px 0 0' }}>
+                {ordinal(mine.place ?? 0)} place · all {mine.total} questions in{' '}
+                {formatElapsed(mine.elapsedMs)}. The round keeps going for the other teams.
+              </p>
             </div>
           </div>
         ) : playing ? (
@@ -978,8 +1162,8 @@ function Play({
                   </span>
                 </div>
               ) : (
-                <div className="word" style={{ fontSize: 24 }}>
-                  Deck finished 🎉
+                <div className="word" style={{ fontSize: 22 }}>
+                  Your teammates hold the last cards — cheer them on!
                 </div>
               )}
             </div>
@@ -1000,23 +1184,34 @@ function Play({
                 ⏭ Skip
               </button>
             </div>
+            {mine && (
+              <p className="muted" style={{ textAlign: 'center', margin: '12px 0 0' }}>
+                Team progress: <b>{mine.done}</b> of {mine.total} · skipped cards come back at the
+                end <br />
+                <StreakBadge streak={mine.streak} />
+              </p>
+            )}
           </>
         ) : (
-          <div className="empty">Watching this round — the scores update live below.</div>
+          <div className="empty">Watching this round — the race updates live below.</div>
         )}
       </div>
 
-      <Scoreboard
-        title="Live scores"
-        scores={view.scores.round}
-        teams={room.teams}
-        hint={`${room.answered} answered this round`}
-      />
+      <div className="card">
+        <div className="spread">
+          <h2 style={{ margin: 0 }}>The race</h2>
+          <span className="muted">{race.total} questions per team</span>
+        </div>
+        <RaceGrid view={view} />
+      </div>
     </>
   );
 }
 
-/** What a spectating admin sees while the round runs: scores, live. */
+/**
+ * What a spectating admin sees while the round runs — built to be put on a big
+ * screen, so it shows progress and streaks but never a question.
+ */
 function LiveDashboard({
   view,
   remainingMs,
@@ -1030,13 +1225,11 @@ function LiveDashboard({
   busy: boolean;
   act: Act;
 }) {
-  const { room, scores, log } = view;
+  const { room, log, race } = view;
   const total = room.settings.durationSec * 1000;
   const pct = Math.max(0, Math.min(100, (remainingMs / total) * 100));
   const low = startsInMs <= 0 && remainingMs <= 10_000;
   const gettingReady = startsInMs > 0;
-  const playingTeams = scores.round.filter((s) => room.settings.activeTeams.includes(s.team));
-  const best = Math.max(0, ...playingTeams.map((s) => s.score));
   const answering = room.players.filter(
     (p) => p.team && room.settings.activeTeams.includes(p.team),
   ).length;
@@ -1047,13 +1240,20 @@ function LiveDashboard({
         <div className="spread">
           <div>
             <div className={`timer${low ? ' low' : ''}`}>
-              {gettingReady ? `Starts in ${Math.ceil(startsInMs / 1000)}` : formatClock(remainingMs)}
+              {gettingReady
+                ? `Starts in ${Math.ceil(startsInMs / 1000)}`
+                : formatClock(remainingMs)}
             </div>
             <p className="muted" style={{ margin: '6px 0 0' }}>
-              👁 Live scoreboard · {answering} playing · {room.answered} answered
+              👁 Live race · {race.teams.length} teams · {answering} playing · {race.total}{' '}
+              questions each
             </p>
           </div>
-          <button className="btn sm danger" disabled={busy} onClick={() => act({ action: 'finish' })}>
+          <button
+            className="btn sm danger"
+            disabled={busy}
+            onClick={() => act({ action: 'finish' })}
+          >
             End now
           </button>
         </div>
@@ -1061,58 +1261,66 @@ function LiveDashboard({
           <i style={{ width: `${pct}%` }} />
         </div>
 
-        <div className="live-grid">
-          {playingTeams.map((team) => (
-            <div
-              key={team.team}
-              className={`live-card${team.score === best && best > 0 ? ' lead' : ''}`}
-            >
-              <div className="team">
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    background:
-                      team.score === best && best > 0
-                        ? 'var(--cream)'
-                        : teamColor(room.teams, team.team),
-                  }}
-                />
-                {team.team}
-              </div>
-              <div className="num">{team.correct}</div>
-              <div className="detail">
-                correct{room.settings.skipPenalty ? ` · ${team.score} pts` : ''} · {team.skipped}{' '}
-                skipped
-              </div>
-              <div className="detail">
-                {team.players.length} {team.players.length === 1 ? 'player' : 'players'}
-              </div>
-            </div>
-          ))}
-          {!playingTeams.length && <div className="empty">No teams are playing this round.</div>}
-        </div>
+        <Hype view={view} />
+        <WinnerBanner view={view} />
+        <RaceGrid view={view} />
       </div>
 
       <div className="card">
         <h2>As it happens</h2>
         <div className="ticker">
           {log.map((entry, index) => (
-            <div key={`${entry.at}-${index}`} className="ticker-row">
-              <span>
-                <b style={{ color: teamColor(room.teams, entry.team) }}>{entry.playerName}</b>{' '}
-                {entry.text}
-              </span>
-              <span className={`res ${entry.result}`}>
-                {entry.result === 'correct' ? '✓' : '⏭'}
-              </span>
-            </div>
+            <FeedRow key={`${entry.at}-${index}`} entry={entry} view={view} />
           ))}
           {!log.length && <div className="empty">Waiting for the first answer…</div>}
         </div>
       </div>
     </>
+  );
+}
+
+/** The results: who finished, in what order, and how long every team took. */
+function RaceResults({ view }: { view: RoomView }) {
+  const { race, scores } = view;
+  if (!race.teams.length) return null;
+  const medals = ['🥇', '🥈', '🥉'];
+  const roundLength = race.startedAt && race.endedAt ? race.endedAt - race.startedAt : 0;
+  return (
+    <div className="card">
+      <div className="spread" style={{ marginBottom: 12 }}>
+        <h2 style={{ margin: 0 }}>Race results</h2>
+        <span className="muted">
+          {race.total} questions · round lasted {formatElapsed(roundLength)}
+        </span>
+      </div>
+      <div className="results">
+        {race.teams.map((t, index) => {
+          const row = scores.round.find((s) => s.team === t.team);
+          return (
+            <div key={t.team} className={`result-row${t.place === 1 ? ' first' : ''}`}>
+              <div className="rank">{t.place ? (medals[t.place - 1] ?? t.place) : index + 1}</div>
+              <div>
+                <div className="team-name" style={{ fontWeight: 700 }}>
+                  {t.team}
+                </div>
+                <div className="sub-line">
+                  ✓ {row?.correct ?? t.done} · ⏭ {row?.skipped ?? 0} skipped · best streak{' '}
+                  {t.bestStreak}
+                </div>
+              </div>
+              <div className="time">
+                <b>{formatElapsed(t.elapsedMs)}</b>
+                <small>
+                  {t.finishedAt
+                    ? `finished ${ordinal(t.place ?? 0)} · all ${t.total}`
+                    : `did not finish · ${t.done}/${t.total}`}
+                </small>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1127,30 +1335,30 @@ function Dashboard({
   busy: boolean;
   act: Act;
 }) {
-  const { room, scores, log } = view;
+  const { room, scores, log, race } = view;
   const [tab, setTab] = useState<'round' | 'total'>('round');
-  const winner = scores.round[0];
+  const leader = scores.round[0];
+  const first = race.teams.find((t) => t.team === race.winner);
+  const everyoneDone = race.teams.length > 0 && race.teams.every((t) => t.finishedAt);
 
   return (
     <>
       <div className="card">
-        <h1>🏁 Time&rsquo;s up</h1>
+        <h1>{first ? `🏆 ${first.team} wins!` : '🏁 Time’s up'}</h1>
         <p className="sub">
-          {winner && winner.score > 0
-            ? `${winner.team} leads this round with ${winner.score} ${winner.score === 1 ? 'point' : 'points'}.`
-            : 'Nobody scored this round.'}
+          {first
+            ? `First to answer all ${first.total} questions, in ${formatElapsed(first.elapsedMs)}.${everyoneDone ? ' Every team finished.' : ''}`
+            : leader && leader.score > 0
+              ? `Nobody finished every question. ${leader.team} got furthest with ${leader.score} ${leader.score === 1 ? 'point' : 'points'}.`
+              : 'Nobody scored this round.'}
         </p>
-        <div className="tabs">
-          <button className={tab === 'round' ? 'on' : ''} onClick={() => setTab('round')}>
-            This round
-          </button>
-          <button className={tab === 'total' ? 'on' : ''} onClick={() => setTab('total')}>
-            Overall ({room.rounds})
-          </button>
-        </div>
         {admin ? (
           <div className="row">
-            <button className="btn primary" disabled={busy} onClick={() => act({ action: 'start' })}>
+            <button
+              className="btn primary"
+              disabled={busy}
+              onClick={() => act({ action: 'start' })}
+            >
               🔁 Play again
             </button>
             <button className="btn" disabled={busy} onClick={() => act({ action: 'reset' })}>
@@ -1169,8 +1377,18 @@ function Dashboard({
         )}
       </div>
 
+      <RaceResults view={view} />
+
+      <div className="tabs" style={{ marginTop: 18 }}>
+        <button className={tab === 'round' ? 'on' : ''} onClick={() => setTab('round')}>
+          This round
+        </button>
+        <button className={tab === 'total' ? 'on' : ''} onClick={() => setTab('total')}>
+          Overall ({room.rounds})
+        </button>
+      </div>
       <Scoreboard
-        title={tab === 'round' ? 'Round dashboard' : 'Overall dashboard'}
+        title={tab === 'round' ? 'Round points' : 'Overall points'}
         scores={tab === 'round' ? scores.round : scores.total}
         teams={room.teams}
         hint={room.settings.skipPenalty ? 'Skip = −1' : 'Skip = 0'}

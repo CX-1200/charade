@@ -22,7 +22,7 @@ A multiplayer charades game for the browser, built to deploy on Vercel.
 
 ### Admins watch, players play
 
-An admin never has to join a team. Create a room and you are a spectator: the lobby shows the host settings, and the moment the round starts your screen becomes a **live scoreboard** — a card per team counting correct answers as they land, plus a running feed of who just answered what. Join a team from the lobby if you would rather play.
+An admin never has to join a team. Create a room and you are a spectator: the lobby shows the host settings, and the moment the round starts your screen becomes a **live race board**, built to be put on a big screen: a card per team with its progress (`7/20`), streak badges, and a feed of who scored — **never the questions themselves**, since other teams are still acting out the same ones. Join a team from the lobby if you would rather play.
 
 Teams belong to the players. Creating a room no longer asks anyone to name one; the first player in is asked to create the first team, and everyone after can join it or start their own. A round will not start until at least one team exists with somebody on it.
 
@@ -41,10 +41,19 @@ Admin is unlocked on the home page: hit `🔒 Admin`, type the password, and the
 3. Friends open the same site, type the code (or click the invite link), and enter a name.
 4. **Teams are made inside the room.** The first person in has no team to join, so the room asks them to name one and drops them into it. Everyone after that can join an existing team or start their own.
 5. In the lobby the admin sets the **countdown** (30/60/90/120/180s presets, or anything from 15 to 600 seconds), ticks which **categories** are in play, marks each **team** as In or Out for this round, and chooses whether skipping costs a point.
-6. Admin hits `🚀 Start game`. Every screen shows **Get ready… 3, 2, 1**, then everyone on an In team plays at once, drawing from the same mixed deck, so **nobody sees the same question twice**. Players on an Out team watch the live scores instead.
-7. When time runs out the round settles automatically (the admin can also end it early). The dashboard shows scores per team, correct/skipped counts, and the full answer log. `🔁 Play again` keeps a running overall total.
+6. Admin hits `🚀 Start game`. Every screen shows **Get ready… 3, 2, 1**, then it's a **race**: every In team works through its own shuffle of the *same* questions. Each player on a team holds a different card; a **skipped card goes to the bottom of the team's deck** and comes back later, so a team only finishes by getting every question right. Players on an Out team watch the race instead.
+7. **The first team to finish is shown as the winner on every screen — but the round keeps going** for everyone else, so second and third place are still up for grabs. A finished team's players see their place and time instead of a card.
+8. The round ends when the clock runs out, when the admin presses End now, or on its own once every team has finished. The results show each team's **place and the time it took** (finishers: time to answer everything; the rest: the time they played, and how far they got), best streak, points per team, and the full answer log with the words revealed. `🔁 Play again` keeps a running overall total.
 
-Scoring: correct `+1`, skip `0` (the admin can turn on "skips cost 1 point"). Points go to the player's **team**.
+Streaks: correct answers in a row, per team, reset by a skip. `🔥 On Fire!` at 3, `⚡ Unstoppable!` at 5, `👑 Legendary!` at 8, `🌟 Godlike!` at 12 — each flashes across the live board as it is reached.
+
+Scoring: correct `+1`, skip `0` (the admin can turn on "skips cost 1 point"). Points go to the player's **team**. In the round ranking, finishers come first in finishing order; everyone else by points.
+
+### Player credentials
+
+Each player has two values. The **player ID** is public — every screen in the room receives it, because that is how players are listed and how an admin points at someone to remove them. The **player secret** is a random 192-bit **bearer token** handed only to that player's browser when they join, and every action taken as that player (answering, changing team, leaving) must present it. So seeing someone's ID lets you do nothing as them.
+
+The server stores only a **SHA-256 hash** of each secret and compares in constant time. Browsers send credentials in request **headers**, never in the URL, since URLs end up in logs and history. Players who joined before this existed simply rejoin once under the same name and take their old place back.
 
 ## Scale
 
@@ -65,7 +74,7 @@ Measured at 50 players + 10 judges, two instances sharing one libSQL server over
 | Human pace (~5 answers/s) | answer p95 **64 ms**, judge poll p95 **40 ms** |
 | Sustained burst | 600/600 answers counted, none lost, none rejected |
 | Start of a round | every player able to answer within **54 ms** of each other |
-| Room document | 16 KB with 600 answers recorded |
+| Room document | 17 KB served with 600 answers recorded; team decks are stored as indexes, not copies |
 
 ### Database usage
 
@@ -161,7 +170,8 @@ lib/
   csv.ts                     Spreadsheet import/export, shared by browser and server
   admin.ts                   Password check and HMAC-signed admin tokens
   store.ts                   KV store: turso / redis / file / memory drivers + locking
-  serialize.ts               The room view sent to clients (the deck never leaves the server)
+  auth.ts                    Player secrets: issue, hash, verify
+  serialize.ts               The room view sent to clients (the deck never leaves the server; questions hidden from the feed mid-round)
   types.ts, ui.ts, client.ts Types, shared constants, fetch helpers
 data/
   questions.csv              The question bank's permanent copy

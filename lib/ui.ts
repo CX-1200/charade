@@ -14,3 +14,25 @@ export const MAX_DURATION = 600;
 
 export const teamColor = (teams: string[], team: string) =>
   TEAM_COLORS[Math.max(0, teams.indexOf(team)) % TEAM_COLORS.length];
+
+/**
+ * Hype for a team on a run of correct answers. A skip resets the run. Past the
+ * last tier the label stays at the top one.
+ */
+export const STREAK_TIERS = [
+  { at: 3, label: 'On Fire!', emoji: '🔥' },
+  { at: 5, label: 'Unstoppable!', emoji: '⚡' },
+  { at: 8, label: 'Legendary!', emoji: '👑' },
+  { at: 12, label: 'Godlike!', emoji: '🌟' },
+] as const;
+
+export function streakTier(streak: number) {
+  let tier: (typeof STREAK_TIERS)[number] | null = null;
+  for (const t of STREAK_TIERS) if (streak >= t.at) tier = t;
+  return tier;
+}
+
+/** The tier a team just stepped into on this answer, if it crossed one. */
+export function streakMilestone(streak: number) {
+  return STREAK_TIERS.find((t) => t.at === streak) ?? null;
+}

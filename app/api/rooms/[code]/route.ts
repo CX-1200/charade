@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isAdmin, requireAdmin } from '@/lib/admin';
+import { authenticate, newSecret, requireAuthenticated } from '@/lib/auth';
 import { HttpError } from '@/lib/errors';
 import {
   answer,
@@ -8,6 +9,7 @@ import {
   clean,
   clearHistory,
   createTeam,
+  findUnclaimedPlayer,
   finishRound,
   getBank,
   getRoomForRead,
@@ -16,9 +18,7 @@ import {
   removePlayer,
   removeTeam,
   renamePlayer,
-  requirePlayer,
   resetRoom,
-
   setTeamActive,
   startRound,
   touch,
@@ -65,18 +65,27 @@ function fail(error: unknown) {
   );
 }
 
-/** Poll endpoint: returns the whole room view and keeps the caller's presence warm. */
+/**
+ * Poll endpoint: returns the room view and keeps the caller's presence warm.
+ *
+ * Credentials come in headers, not the query string — URLs end up in server
+ * and proxy logs. Without a valid player secret the caller gets the public view
+ * only: no "you", and no card.
+ */
 export async function GET(request: Request, ctx: Ctx) {
   try {
     const { code } = await ctx.params;
-    const params = new URL(request.url).searchParams;
-    const playerId = params.get('playerId');
-    const admin = isAdmin(params.get('adminToken'));
+    const admin = isAdmin(request.headers.get('x-admin-token'));
 
     let room = await getRoomForRead(code);
     if (!room) throw new HttpError(404, 'Room not found');
 
-    const me = playerId ? room.players.find((p) => p.id === playerId) : null;
+    const me = authenticate(
+      room,
+      request.headers.get('x-player-id'),
+      request.headers.get('x-player-secret'),
+    );
+    const playerId = me?.id ?? null;
     const presenceStale =
       !!me && room.state !== 'playing' && Date.now() - me.lastSeen > PRESENCE_WRITE_MS;
     const clockRanOut = room.state === 'playing' && !!room.endsAt && Date.now() >= room.endsAt;
@@ -104,41 +113,50 @@ export async function POST(request: Request, ctx: Ctx) {
     const { code } = await ctx.params;
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? '');
-    const playerId = typeof body.playerId === 'string' ? body.playerId : null;
     const admin = isAdmin(body.adminToken);
     if (ADMIN_ACTIONS.has(action)) requireAdmin(body.adminToken);
 
-    let joinedId: string | null = null;
+    // Who is asking. Resolved against the fresh room inside the lock.
+    let viewerId: string | null = null;
+    // A secret is returned only by the call that creates it.
+    let issued: { playerId: string; secret: string } | null = null;
 
     const room = await withRoom(code, async (draft) => {
-      touch(draft, playerId);
+      const me = authenticate(draft, body.playerId, body.secret);
+      viewerId = me?.id ?? null;
+      if (me) touch(draft, me.id);
+
+      /** Everything a player does as themselves needs their secret. */
+      const self = () => me ?? requireAuthenticated(draft, body.playerId, body.secret);
 
       switch (action) {
         case 'join': {
-          const existing = playerId ? draft.players.find((p) => p.id === playerId) : null;
-          if (existing) {
-            joinedId = existing.id;
-            break;
-          }
-          const player = joinRoom(draft, clean(body.name, 20));
-          joinedId = player.id;
+          if (me) break; // already in, credentials still good
+          const name = clean(body.name, 20);
+          const { secret, hash } = newSecret();
+          const legacy = findUnclaimedPlayer(draft, name);
+          const player = legacy ?? joinRoom(draft, name, hash);
+          player.secretHash = hash;
+          player.lastSeen = Date.now();
+          viewerId = player.id;
+          issued = { playerId: player.id, secret };
           break;
         }
         case 'leave': {
-          if (playerId) removePlayer(draft, playerId);
+          removePlayer(draft, self().id);
+          viewerId = null;
           break;
         }
         case 'rename': {
-          renamePlayer(draft, playerId ?? '', clean(body.name, 20));
+          renamePlayer(draft, self().id, clean(body.name, 20));
           break;
         }
         case 'joinTeam': {
-          joinTeam(draft, playerId ?? '', clean(body.team, 16));
+          joinTeam(draft, self().id, clean(body.team, 16));
           break;
         }
         case 'createTeam': {
-          requirePlayer(draft, playerId ?? '');
-          createTeam(draft, playerId ?? '', clean(body.team, 16));
+          createTeam(draft, self().id, clean(body.team, 16));
           break;
         }
         case 'removeTeam': {
@@ -169,7 +187,7 @@ export async function POST(request: Request, ctx: Ctx) {
         }
         case 'answer': {
           const result = body.result === 'skip' ? 'skip' : 'correct';
-          answer(draft, playerId ?? '', result as AnswerResult);
+          answer(draft, self().id, result as AnswerResult);
           break;
         }
         case 'finish': {
@@ -186,21 +204,22 @@ export async function POST(request: Request, ctx: Ctx) {
           break;
         }
         case 'kick': {
+          // The target is named by public id; the admin token is the authority.
           removePlayer(draft, String(body.targetId ?? ''));
           break;
         }
         case 'ping':
+          self();
           break;
         default:
           throw new HttpError(400, `Unknown action: ${action}`);
       }
     });
 
-    const viewer = joinedId ?? playerId;
     const bank = admin && room.state === 'lobby' ? await getBank() : null;
     return NextResponse.json({
-      ...publicRoom(room, viewer, { admin, bank }),
-      playerId: viewer,
+      ...publicRoom(room, viewerId, { admin, bank }),
+      ...(issued ?? {}),
     });
   } catch (error) {
     return fail(error);

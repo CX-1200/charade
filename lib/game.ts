@@ -4,7 +4,7 @@ import { kvDel, kvGet, kvSet, kvSetAdd, kvSetMembers, kvSetRemove, withLock } fr
 import { HttpError } from './errors';
 import { parseQuestionsCsv } from './csv';
 import { CATEGORY_COLORS } from './ui';
-import { id, makeRoom, roomCode, seedBank, settle } from './rules';
+import { id, makeRoom, normalizeRoom, roomCode, seedBank, settle } from './rules';
 import type { Bank, Room } from './types';
 
 /** Pure game rules live in ./rules so they stay independent of storage. */
@@ -29,7 +29,10 @@ const READ_CACHE_MS = 750;
 const readCache = new Map<string, { room: Room; at: number }>();
 
 function remember(room: Room): void {
-  readCache.set(room.code.toUpperCase(), { room: structuredClone(room), at: Date.now() });
+  readCache.set(room.code.toUpperCase(), {
+    room: structuredClone(room),
+    at: Date.now(),
+  });
 }
 
 /** For read-only views. Anything that writes must use withRoom instead. */
@@ -73,7 +76,11 @@ function bankFromRepo(): Bank | null {
       name: category.name,
       color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
       createdAt: now + index,
-      items: category.items.map((text, i) => ({ id: id('q'), text, createdAt: now + i })),
+      items: category.items.map((text, i) => ({
+        id: id('q'),
+        text,
+        createdAt: now + i,
+      })),
     })),
     updatedAt: now,
   };
@@ -109,7 +116,8 @@ export async function updateBank(mutate: (bank: Bank) => void): Promise<Bank> {
 
 export async function getRoom(code: string): Promise<Room | null> {
   if (!code) return null;
-  return kvGet<Room>(roomKey(code));
+  const room = await kvGet<Room>(roomKey(code));
+  return room ? normalizeRoom(room) : null;
 }
 
 /**
@@ -166,9 +174,17 @@ export async function withRoom(
   });
 }
 
-export async function createRoom(hostName: string): Promise<Room> {
+/** The host's secret comes back once, here; only its hash is stored. */
+export async function createRoom(hostName: string, hostSecretHash: string): Promise<Room> {
   const bank = await getBank();
   let code = roomCode();
   for (let attempt = 0; attempt < 8 && (await getRoom(code)); attempt += 1) code = roomCode();
-  return saveRoom(makeRoom(code, hostName, bank.categories.map((c) => c.id)));
+  return saveRoom(
+    makeRoom(
+      code,
+      hostName,
+      bank.categories.map((c) => c.id),
+      hostSecretHash,
+    ),
+  );
 }

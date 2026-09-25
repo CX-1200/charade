@@ -3,6 +3,8 @@ import { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
 import type {
   AnswerResult,
   Tally,
+  TeamDeck,
+  TeamResult,
   Bank,
   Category,
   DeckEntry,
@@ -56,13 +58,19 @@ export function shuffle<T>(input: T[]): T[] {
 }
 
 export function clean(value: unknown, max = 120): string {
-  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 }
 
 /* ------------------------------------------------------------------ bank */
 
 const SEED: Array<{ name: string; items: string[] }> = [
-  { name: 'Animals', items: ['Giraffe', 'Penguin', 'Koala', 'Crab', 'Bat', 'Peacock'] },
+  {
+    name: 'Animals',
+    items: ['Giraffe', 'Penguin', 'Koala', 'Crab', 'Bat', 'Peacock'],
+  },
   {
     name: 'Movies',
     items: ['Titanic', 'Harry Potter', 'Kung Fu Panda', 'Jurassic Park', 'The Lion King'],
@@ -88,12 +96,15 @@ export function seedBank(): Bank {
       name: entry.name,
       color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
       createdAt: now + index,
-      items: entry.items.map((text, i) => ({ id: id('q'), text, createdAt: now + i })),
+      items: entry.items.map((text, i) => ({
+        id: id('q'),
+        text,
+        createdAt: now + i,
+      })),
     })),
     updatedAt: now,
   };
 }
-
 
 export type BankExport = {
   format: 'charade-question-bank';
@@ -195,8 +206,27 @@ export function buildDeck(bank: Bank, categoryIds: string[]): DeckEntry[] {
 
 /* ------------------------------------------------------------------ room */
 
+/**
+ * Rooms saved before a field existed come back without it. Filling the gaps on
+ * read means the rest of the rules never have to ask.
+ */
+export function normalizeRoom(room: Room): Room {
+  room.roundDeck ??= [];
+  room.decks ??= {};
+  room.finishOrder ??= [];
+  room.playerTally ??= {};
+  room.endedAt ??= null;
+  for (const round of room.history) round.teams ??= [];
+  return room;
+}
+
 /** Builds a fresh room in memory. Callers persist it and guarantee the code. */
-export function makeRoom(code: string, hostName: string, categoryIds: string[]): Room {
+export function makeRoom(
+  code: string,
+  hostName: string,
+  categoryIds: string[],
+  hostSecretHash: string,
+): Room {
   const now = Date.now();
   const host: Player = {
     id: id('p'),
@@ -205,6 +235,7 @@ export function makeRoom(code: string, hostName: string, categoryIds: string[]):
     isHost: true,
     joinedAt: now,
     lastSeen: now,
+    secretHash: hostSecretHash,
   };
   return {
     code,
@@ -219,20 +250,34 @@ export function makeRoom(code: string, hostName: string, categoryIds: string[]):
     },
     players: [host],
     teams: [],
-    deck: [],
-    cursor: 0,
+    roundDeck: [],
+    decks: {},
+    finishOrder: [],
     tally: {},
+    playerTally: {},
     current: {},
     log: [],
     history: [],
     startedAt: null,
     endsAt: null,
+    endedAt: null,
     createdAt: now,
     updatedAt: now,
   };
 }
 
-export function joinRoom(room: Room, name: string): Player {
+/**
+ * A player saved before credentials existed, with this name. Their public id
+ * was the only thing needed to act as them, so anyone could already; letting
+ * the first person to rejoin under that name take the record over — and secure
+ * it — loses nothing and spares everyone a duplicate "Name (2)".
+ */
+export function findUnclaimedPlayer(room: Room, name: string): Player | null {
+  const wanted = clean(name, 20).toLowerCase();
+  return room.players.find((p) => !p.secretHash && p.name.toLowerCase() === wanted) ?? null;
+}
+
+export function joinRoom(room: Room, name: string, secretHash: string): Player {
   const cleanName = clean(name, 20) || 'Player';
   const taken = room.players.some((p) => p.name.toLowerCase() === cleanName.toLowerCase());
   const now = Date.now();
@@ -244,6 +289,7 @@ export function joinRoom(room: Room, name: string): Player {
     isHost: room.players.length === 0,
     joinedAt: now,
     lastSeen: now,
+    secretHash,
   };
   if (player.isHost) room.hostId = player.id;
   room.players.push(player);
@@ -263,8 +309,9 @@ export function touch(room: Room, playerId?: string | null): void {
 }
 
 export function removePlayer(room: Room, playerId: string): void {
+  // A card in the hand of someone leaving goes back to their team, not missing.
+  returnCard(room, playerId);
   room.players = room.players.filter((p) => p.id !== playerId);
-  delete room.current[playerId];
   if (room.hostId === playerId && room.players.length) {
     room.players[0].isHost = true;
     room.hostId = room.players[0].id;
@@ -282,8 +329,8 @@ export function renamePlayer(room: Room, playerId: string, name: string): void {
   player.name = next;
 }
 
-function bump(tally: Tally, team: string, result: AnswerResult): void {
-  const row = (tally[team] ??= { correct: 0, skipped: 0 });
+function bump(tally: Tally, key: string, result: AnswerResult): void {
+  const row = (tally[key] ??= { correct: 0, skipped: 0 });
   if (result === 'correct') row.correct += 1;
   else row.skipped += 1;
 }
@@ -309,7 +356,12 @@ export function createTeam(room: Room, playerId: string, name: string): string {
 export function joinTeam(room: Room, playerId: string, team: string): void {
   const player = requirePlayer(room, playerId);
   if (!room.teams.includes(team)) throw new HttpError(400, 'That team does not exist');
+  if (player.team === team) return;
+  // Mid-round, the card stays with the team it was dealt from…
+  returnCard(room, player.id);
   player.team = team;
+  // …and the player picks up a card from their new team.
+  if (room.state === 'playing' && isTeamActive(room, team)) dealTo(room, player);
 }
 
 export function removeTeam(room: Room, team: string): void {
@@ -327,6 +379,10 @@ export function setTeamActive(room: Room, team: string, active: boolean): void {
   if (active) current.add(team);
   else current.delete(team);
   room.settings.activeTeams = room.teams.filter((t) => current.has(t));
+  // Switched on mid-round: the team joins the race with the same questions.
+  if (active && room.state === 'playing') {
+    for (const p of room.players) if (p.team === team && !room.current[p.id]) dealTo(room, p);
+  }
 }
 
 export function isTeamActive(room: Room, team: string): boolean {
@@ -350,19 +406,71 @@ export function applySettings(room: Room, patch: Partial<RoomSettings>): void {
   if (typeof patch.skipPenalty === 'boolean') room.settings.skipPenalty = patch.skipPenalty;
 }
 
-/* ----------------------------------------------------------------- round */
+/* ---------------------------------------------------------------- decks */
 
-function drawCard(room: Room): DeckEntry | null {
-  if (!room.deck.length) return null;
-  if (room.cursor >= room.deck.length) {
-    // Everyone burned through the whole bank — reshuffle and keep playing.
-    room.deck = shuffle(room.deck);
-    room.cursor = 0;
-  }
-  const card = room.deck[room.cursor];
-  room.cursor += 1;
-  return card ?? null;
+function draw(room: Room, deck: TeamDeck): DeckEntry | null {
+  const index = deck.queue.shift();
+  return index === undefined ? null : (room.roundDeck[index] ?? null);
 }
+
+/** A card goes back to the bottom of the deck. */
+function putBack(room: Room, deck: TeamDeck, card: DeckEntry): void {
+  const index = room.roundDeck.findIndex((e) => e.itemId === card.itemId);
+  if (index !== -1) deck.queue.push(index);
+}
+
+function newTeamDeck(room: Room): TeamDeck {
+  return {
+    queue: shuffle(room.roundDeck.map((_, index) => index)),
+    total: room.roundDeck.length,
+    done: 0,
+    finishedAt: null,
+    streak: 0,
+    bestStreak: 0,
+  };
+}
+
+/**
+ * A team joining the race late — created mid-round, or an active team whose
+ * first player arrives after the start — gets the same questions as everyone.
+ */
+function ensureDeck(room: Room, team: string): TeamDeck | null {
+  if (room.state !== 'playing' || !isTeamActive(room, team)) return null;
+  return (room.decks[team] ??= newTeamDeck(room));
+}
+
+function dealTo(room: Room, player: Player): void {
+  const deck = ensureDeck(room, player.team);
+  room.current[player.id] = deck ? draw(room, deck) : null;
+}
+
+/** Puts a player's card back at the bottom of the deck it came from. */
+function returnCard(room: Room, playerId: string): void {
+  const card = room.current[playerId];
+  delete room.current[playerId];
+  const team = room.players.find((p) => p.id === playerId)?.team;
+  if (card && team && room.decks[team]) {
+    putBack(room, room.decks[team], card);
+    refill(room, team, playerId);
+  }
+}
+
+/**
+ * Teammates can be left empty-handed while the rest of the team holds the last
+ * cards. When a card comes back to the deck, hand it to whoever is waiting.
+ */
+function refill(room: Room, team: string, except?: string): void {
+  const deck = room.decks[team];
+  if (!deck || deck.finishedAt) return;
+  for (const p of room.players) {
+    if (!deck.queue.length) return;
+    if (p.team === team && p.id !== except && !room.current[p.id]) {
+      room.current[p.id] = draw(room, deck);
+    }
+  }
+}
+
+/* ----------------------------------------------------------------- round */
 
 export function startRound(room: Room, deck: DeckEntry[]): void {
   if (!deck.length) {
@@ -380,15 +488,19 @@ export function startRound(room: Room, deck: DeckEntry[]): void {
   if (room.state === 'playing') finishRound(room);
 
   const startsAt = Date.now() + LEAD_IN_MS;
-  room.deck = deck;
-  room.cursor = 0;
+  room.roundDeck = deck;
+  room.decks = {};
+  room.finishOrder = [];
   room.current = {};
   room.log = [];
   room.tally = {};
+  room.playerTally = {};
   room.state = 'playing';
   room.startedAt = startsAt;
   room.endsAt = startsAt + room.settings.durationSec * 1000;
-  for (const player of playing) room.current[player.id] = drawCard(room);
+  room.endedAt = null;
+  // Every team with players races through its own shuffle of the same questions.
+  for (const player of playing) dealTo(room, player);
 }
 
 export function answer(room: Room, playerId: string, result: AnswerResult): void {
@@ -402,10 +514,32 @@ export function answer(room: Room, playerId: string, result: AnswerResult): void
   if (!isTeamActive(room, player.team)) {
     throw new HttpError(403, 'Your team is sitting this round out');
   }
+  const deck = room.decks[player.team];
+  if (!deck) throw new HttpError(409, 'This round started before an update — start a new round');
+  if (deck.finishedAt) throw new HttpError(409, 'Your team has already finished every question');
   const card = room.current[player.id];
   if (!card) throw new HttpError(409, 'No card to answer');
 
+  const now = Date.now();
   bump(room.tally, player.team, result);
+  bump(room.playerTally, player.id, result);
+
+  if (result === 'correct') {
+    deck.done += 1;
+    deck.streak += 1;
+    deck.bestStreak = Math.max(deck.bestStreak, deck.streak);
+  } else {
+    // A skipped card is not gone: it waits at the bottom of the team's deck.
+    deck.streak = 0;
+    putBack(room, deck, card);
+  }
+
+  const finished = deck.done >= deck.total;
+  if (finished) {
+    deck.finishedAt = now;
+    room.finishOrder.push(player.team);
+  }
+
   room.log.push({
     playerId: player.id,
     playerName: player.name,
@@ -413,45 +547,74 @@ export function answer(room: Room, playerId: string, result: AnswerResult): void
     text: card.text,
     categoryName: card.categoryName,
     result,
-    at: Date.now(),
+    at: now,
+    streak: deck.streak,
+    ...(finished ? { finished: true } : {}),
   });
   // Bound the document: the log is a feed, the tally is the score.
   if (room.log.length > MAX_LOG_ENTRIES) room.log = room.log.slice(-MAX_LOG_ENTRIES);
 
-  room.current[player.id] = drawCard(room);
-  player.lastSeen = Date.now();
+  room.current[player.id] = draw(room, deck);
+  if (finished) {
+    for (const p of room.players) if (p.team === player.team) room.current[p.id] = null;
+  } else {
+    refill(room, player.team);
+  }
+  player.lastSeen = now;
+
+  // The first team home is the winner, but everyone else keeps playing. Only
+  // once every racing team is done is there nothing left to play for.
+  const racing = Object.entries(room.decks)
+    .filter(([team]) => isTeamActive(room, team))
+    .map(([, d]) => d);
+  if (finished && racing.length && racing.every((d) => d.finishedAt)) finishRound(room, now);
 }
 
 /** Ends the round if the clock has run out. Safe to call on every read. */
 export function settle(room: Room): boolean {
   if (room.state !== 'playing' || !room.endsAt || Date.now() < room.endsAt) return false;
-  finishRound(room);
+  finishRound(room, room.endsAt);
   return true;
 }
 
-export function finishRound(room: Room): void {
+export function teamResults(room: Room): TeamResult[] {
+  return Object.entries(room.decks).map(([team, deck]) => ({
+    team,
+    done: deck.done,
+    total: deck.total,
+    finishedAt: deck.finishedAt,
+    bestStreak: deck.bestStreak,
+  }));
+}
+
+export function finishRound(room: Room, at: number = Date.now()): void {
   if (room.state !== 'playing') return;
+  room.endedAt = at;
   room.history.push({
     index: room.history.length + 1,
-    startedAt: room.startedAt ?? Date.now(),
-    endedAt: Date.now(),
+    startedAt: room.startedAt ?? at,
+    endedAt: at,
     tally: structuredClone(room.tally),
+    teams: teamResults(room),
     log: [...room.log],
   });
   room.state = 'finished';
   room.current = {};
-  room.endsAt = room.endsAt ?? Date.now();
+  // The decks stay: the results screen reads each team's time from them.
 }
 
 export function resetRoom(room: Room): void {
   room.state = 'lobby';
-  room.deck = [];
-  room.cursor = 0;
+  room.roundDeck = [];
+  room.decks = {};
+  room.finishOrder = [];
   room.current = {};
   room.log = [];
   room.tally = {};
+  room.playerTally = {};
   room.startedAt = null;
   room.endsAt = null;
+  room.endedAt = null;
 }
 
 export function clearHistory(room: Room): void {
@@ -493,8 +656,15 @@ function scoreTallies(room: Room, tallies: Tally[]): TeamScore[] {
   return [...table.values()].sort((a, b) => b.score - a.score || b.correct - a.correct);
 }
 
+/** This round: teams that finished lead, in finishing order; the rest by score. */
 export function roundScores(room: Room): TeamScore[] {
-  return scoreTallies(room, [room.tally]);
+  const place = (team: string) => {
+    const i = room.finishOrder.indexOf(team);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return scoreTallies(room, [room.tally]).sort(
+    (a, b) => place(a.team) - place(b.team) || b.score - a.score || b.correct - a.correct,
+  );
 }
 
 export function totalScores(room: Room): TeamScore[] {

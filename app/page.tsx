@@ -3,11 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, post, session } from '@/lib/client';
+import { api, post, roomAuth, session } from '@/lib/client';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
-type CreateResponse = { code: string; playerId: string };
-type JoinResponse = { playerId: string };
+type CreateResponse = { code: string; playerId: string; secret: string };
+type JoinResponse = { playerId?: string; secret?: string };
 
 export default function HomePage() {
   const router = useRouter();
@@ -43,7 +43,7 @@ export default function HomePage() {
         name: name.trim(),
         adminToken: session.getAdminToken(),
       });
-      session.setPlayerId(data.code, data.playerId);
+      session.setSeat(data.code, data);
       router.push(`/room/${data.code}`);
     } catch (e) {
       setError((e as Error).message);
@@ -62,9 +62,9 @@ export default function HomePage() {
       const data = await post<JoinResponse>(`/api/rooms/${target}`, {
         action: 'join',
         name: name.trim(),
-        playerId: session.getPlayerId(target),
+        ...roomAuth(target),
       });
-      session.setPlayerId(target, data.playerId);
+      session.setSeat(target, data);
       router.push(`/room/${target}`);
     } catch (e) {
       setError((e as Error).message);
@@ -164,7 +164,11 @@ export default function HomePage() {
                 value={code}
                 maxLength={4}
                 placeholder="CODE"
-                style={{ textTransform: 'uppercase', letterSpacing: 4, fontWeight: 700 }}
+                style={{
+                  textTransform: 'uppercase',
+                  letterSpacing: 4,
+                  fontWeight: 700,
+                }}
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                 onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
               />

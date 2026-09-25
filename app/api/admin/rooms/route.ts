@@ -16,7 +16,7 @@ function fail(error: unknown) {
 /** Every open room, for the admin's Manage rooms page. */
 export async function GET(request: Request) {
   try {
-    requireAdmin(new URL(request.url).searchParams.get('adminToken'));
+    requireAdmin(request.headers.get('x-admin-token'));
     const now = Date.now();
     const rooms = (await listRooms()).map((room) => ({
       code: room.code,
@@ -25,11 +25,11 @@ export async function GET(request: Request) {
       online: room.players.filter((p) => now - p.lastSeen < 20_000).length,
       teams: room.teams,
       rounds: room.history.length,
-      answered: room.log.length,
+      answered: Object.values(room.tally).reduce((n, t) => n + t.correct + t.skipped, 0),
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
       endsAt: room.endsAt,
-      leader: roundScores(room).find((s) => s.score > 0)?.team ?? null,
+      leader: room.finishOrder[0] ?? roundScores(room).find((s) => s.score > 0)?.team ?? null,
     }));
     return NextResponse.json({ rooms });
   } catch (error) {
@@ -40,7 +40,11 @@ export async function GET(request: Request) {
 /** Closing a room here is the only thing in the app that destroys one. */
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { adminToken?: string; code?: string; action?: string };
+    const body = (await request.json()) as {
+      adminToken?: string;
+      code?: string;
+      action?: string;
+    };
     requireAdmin(body.adminToken);
     if (body.action !== 'close') throw new HttpError(400, `Unknown action: ${body.action}`);
     const code = String(body.code ?? '').toUpperCase();

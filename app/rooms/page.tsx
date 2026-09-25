@@ -42,9 +42,9 @@ export default function ManageRoomsPage() {
     const token = session.getAdminToken();
     if (!token) return;
     try {
-      const data = await api<{ rooms: RoomRow[] }>(
-        `/api/admin/rooms?adminToken=${encodeURIComponent(token)}`,
-      );
+      const data = await api<{ rooms: RoomRow[] }>('/api/admin/rooms', {
+        headers: { 'x-admin-token': token },
+      });
       setRooms(data.rooms);
       setError('');
     } catch (e) {
