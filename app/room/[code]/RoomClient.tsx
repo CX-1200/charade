@@ -306,6 +306,16 @@ export default function RoomClient({ code }: { code: string }) {
         color={you.team ? teamColor(room.teams, you.team) : undefined}
         admin={admin}
         onLeave={leave}
+        onLeaveTeam={
+          you.team
+            ? () =>
+                confirm(
+                  room.state === 'playing'
+                    ? `Leave ${you.team}? Your card goes back to the team and you stop playing this round.`
+                    : `Leave ${you.team}?`,
+                ) && act({ action: 'leaveTeam' })
+            : undefined
+        }
       />
       {error && <div className="err">{error}</div>}
 
@@ -364,6 +374,7 @@ function Header({
   color,
   admin,
   onLeave,
+  onLeaveTeam,
 }: {
   code: string;
   you?: string;
@@ -371,29 +382,92 @@ function Header({
   color?: string;
   admin?: boolean;
   onLeave?: () => void;
+  onLeaveTeam?: () => void;
 }) {
   return (
     <div className="topbar">
       <div className="brand">
         <span className="logo">🎭</span> Room <span className="code-pill">{code}</span>
       </div>
-      {you && (
-        <div className="row tight">
-          {admin && <span className="chip on">🔓 Admin</span>}
+      <div className="row tight">
+        <FullscreenButton />
+        {you && admin && <span className="chip on">🔓 Admin</span>}
+        {you && (
           <div className="player-pill">
             <span className="status" />
             {you}
             {team && <span style={{ color, fontWeight: 700 }}>· {team}</span>}
           </div>
-          {/* Always reachable — lobby, mid-round and on the dashboard alike. */}
-          {onLeave && (
-            <button className="btn sm ghost" onClick={onLeave}>
-              Leave game
-            </button>
-          )}
-        </div>
-      )}
+        )}
+        {you && onLeaveTeam && (
+          <button className="btn sm ghost" onClick={onLeaveTeam}>
+            Leave team
+          </button>
+        )}
+        {you && (
+          <>
+            {/* Always reachable — lobby, mid-round and on the dashboard alike. */}
+            {onLeave && (
+              <button className="btn sm ghost" onClick={onLeave}>
+                Leave game
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
+  );
+}
+
+type FullscreenDoc = Document & {
+  webkitFullscreenEnabled?: boolean;
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => void;
+};
+type FullscreenEl = HTMLElement & { webkitRequestFullscreen?: () => void };
+
+/**
+ * Full screen for the big screen and for phones. Browsers that cannot do it
+ * (Safari on iPhone only allows it for video) simply never show the button.
+ */
+function FullscreenButton() {
+  const [supported, setSupported] = useState(false);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const doc = document as FullscreenDoc;
+    setSupported(!!(doc.fullscreenEnabled || doc.webkitFullscreenEnabled));
+    const sync = () => setOn(!!(doc.fullscreenElement || doc.webkitFullscreenElement));
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      document.removeEventListener('webkitfullscreenchange', sync);
+    };
+  }, []);
+  if (!supported) return null;
+  const toggle = () => {
+    const doc = document as FullscreenDoc;
+    const root = document.documentElement as FullscreenEl;
+    if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+      if (doc.exitFullscreen) void doc.exitFullscreen().catch(() => undefined);
+      else doc.webkitExitFullscreen?.();
+    } else if (root.requestFullscreen) {
+      void root.requestFullscreen().catch(() => undefined);
+    } else {
+      root.webkitRequestFullscreen?.();
+    }
+  };
+  return (
+    <button
+      className="btn sm ghost"
+      onClick={toggle}
+      title={on ? 'Exit full screen' : 'Full screen'}
+      aria-label={on ? 'Exit full screen' : 'Full screen'}
+    >
+      {on ? '🗗' : '⛶'}
+      <span className="hide-sm"> {on ? 'Exit full screen' : 'Full screen'}</span>
+    </button>
   );
 }
 
@@ -880,14 +954,14 @@ function AdminPanel({
                 </button>
                 <button
                   className="btn sm ghost"
-                  title={`Delete ${team}`}
+                  title={`Remove ${team}`}
                   disabled={busy}
                   onClick={() =>
-                    confirm(`Delete team “${team}”? Its players go back to picking a team.`) &&
+                    confirm(`Remove team “${team}”? Its players go back to picking a team.`) &&
                     act({ action: 'removeTeam', team })
                   }
                 >
-                  ✕
+                  Remove
                 </button>
               </div>
             );
@@ -911,6 +985,23 @@ function AdminPanel({
             {room.settings.skipPenalty
               ? 'A skip takes a point off the team score.'
               : 'A skip is simply worth nothing.'}
+          </span>
+        </span>
+      </label>
+
+      <label className="switch" style={{ marginBottom: 18 }}>
+        <input
+          type="checkbox"
+          checked={room.settings.rotateCategories}
+          onChange={(e) => act({ action: 'settings', rotateCategories: e.target.checked })}
+        />
+        <span className="track" />
+        <span className="switch-label">
+          Categories take turns
+          <span className="switch-hint">
+            {room.settings.rotateCategories
+              ? 'One question from each category in turn, in a new random order every lap — never the same category twice in a row.'
+              : 'Fully random — the same category can come up several times in a row.'}
           </span>
         </span>
       </label>
@@ -1275,7 +1366,50 @@ function LiveDashboard({
           {!log.length && <div className="empty">Waiting for the first answer…</div>}
         </div>
       </div>
+
+      <ManageTeams view={view} busy={busy} act={act} />
     </>
+  );
+}
+
+/** Admin-only: remove a team at any point, including mid-round. */
+function ManageTeams({ view, busy, act }: { view: RoomView; busy: boolean; act: Act }) {
+  const { room } = view;
+  if (!room.teams.length) return null;
+  return (
+    <details className="card manage-teams">
+      <summary>
+        <b>Manage teams</b> <span className="muted">· remove a team</span>
+      </summary>
+      <div className="stack" style={{ marginTop: 12 }}>
+        {room.teams.map((team) => {
+          const size = room.players.filter((p) => p.team === team).length;
+          return (
+            <div key={team} className="spread">
+              <span>
+                <b style={{ color: teamColor(room.teams, team) }}>{team}</b>{' '}
+                <span className="muted">
+                  {size} {size === 1 ? 'player' : 'players'}
+                </span>
+              </span>
+              <button
+                className="btn sm danger"
+                disabled={busy}
+                onClick={() =>
+                  confirm(
+                    room.state === 'playing'
+                      ? `Remove team “${team}” from this round? Its players go back to picking a team; points already scored stay on the overall dashboard.`
+                      : `Remove team “${team}”? Its players go back to picking a team.`,
+                  ) && act({ action: 'removeTeam', team })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -1411,6 +1545,8 @@ function Dashboard({
           {!log.length && <div className="empty">No answers recorded.</div>}
         </div>
       </div>
+
+      {admin && <ManageTeams view={view} busy={busy} act={act} />}
     </>
   );
 }

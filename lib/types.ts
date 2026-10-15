@@ -71,6 +71,11 @@ export type RoomSettings = {
   activeTeams: string[];
   /** When true a skip costs the team one point. */
   skipPenalty: boolean;
+  /**
+   * When true each team's deck deals the selected categories in turn, so no
+   * category comes up twice in a row while another still has questions.
+   */
+  rotateCategories: boolean;
 };
 
 /** Per-team (or per-player) totals. Kept incrementally so scoring never depends on the log. */

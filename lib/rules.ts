@@ -216,6 +216,7 @@ export function normalizeRoom(room: Room): Room {
   room.finishOrder ??= [];
   room.playerTally ??= {};
   room.endedAt ??= null;
+  room.settings.rotateCategories ??= true;
   for (const round of room.history) round.teams ??= [];
   return room;
 }
@@ -247,6 +248,7 @@ export function makeRoom(
       categoryIds: [...categoryIds],
       activeTeams: [],
       skipPenalty: false,
+      rotateCategories: true,
     },
     players: [host],
     teams: [],
@@ -364,13 +366,31 @@ export function joinTeam(room: Room, playerId: string, team: string): void {
   if (room.state === 'playing' && isTeamActive(room, team)) dealTo(room, player);
 }
 
+/**
+ * Works at any time. Mid-round the team drops out of the race; the points it
+ * already scored stay in the tally, so the overall dashboard keeps them.
+ */
 export function removeTeam(room: Room, team: string): void {
   if (!room.teams.includes(team)) throw new HttpError(404, 'That team does not exist');
   room.teams = room.teams.filter((t) => t !== team);
   room.settings.activeTeams = room.settings.activeTeams.filter((t) => t !== team);
   for (const player of room.players) {
-    if (player.team === team) player.team = '';
+    if (player.team !== team) continue;
+    delete room.current[player.id];
+    player.team = '';
   }
+  delete room.decks[team];
+  room.finishOrder = room.finishOrder.filter((t) => t !== team);
+  endIfEveryoneFinished(room);
+}
+
+/** A player steps out of their team and back to picking one. */
+export function leaveTeam(room: Room, playerId: string): void {
+  const player = requirePlayer(room, playerId);
+  if (!player.team) return;
+  // Mid-round their card goes back to the team, which plays on without them.
+  returnCard(room, player.id);
+  player.team = '';
 }
 
 export function setTeamActive(room: Room, team: string, active: boolean): void {
@@ -404,9 +424,41 @@ export function applySettings(room: Room, patch: Partial<RoomSettings>): void {
     ];
   }
   if (typeof patch.skipPenalty === 'boolean') room.settings.skipPenalty = patch.skipPenalty;
+  if (typeof patch.rotateCategories === 'boolean') {
+    room.settings.rotateCategories = patch.rotateCategories;
+  }
 }
 
 /* ---------------------------------------------------------------- decks */
+
+/**
+ * Shuffles, then deals the groups in turn: one from each category per lap, in
+ * a fresh random order every lap, never the same category twice in a row
+ * across a lap boundary. A plain shuffle can easily serve four of one category
+ * back to back; this cannot, until only one category has questions left.
+ */
+export function takeTurns<T>(items: T[], groupOf: (item: T) => string): T[] {
+  const groups = new Map<string, T[]>();
+  for (const item of shuffle(items)) {
+    const key = groupOf(item);
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  const out: T[] = [];
+  let last: string | null = null;
+  while (groups.size) {
+    const lap = shuffle([...groups.keys()]);
+    if (lap.length > 1 && lap[0] === last) lap.push(lap.shift()!);
+    for (const key of lap) {
+      const group = groups.get(key)!;
+      out.push(group.shift()!);
+      if (!group.length) groups.delete(key);
+      last = key;
+    }
+  }
+  return out;
+}
 
 function draw(room: Room, deck: TeamDeck): DeckEntry | null {
   const index = deck.queue.shift();
@@ -421,7 +473,12 @@ function putBack(room: Room, deck: TeamDeck, card: DeckEntry): void {
 
 function newTeamDeck(room: Room): TeamDeck {
   return {
-    queue: shuffle(room.roundDeck.map((_, index) => index)),
+    queue: room.settings.rotateCategories
+      ? takeTurns(
+          room.roundDeck.map((_, index) => index),
+          (index) => room.roundDeck[index].categoryId,
+        )
+      : shuffle(room.roundDeck.map((_, index) => index)),
     total: room.roundDeck.length,
     done: 0,
     finishedAt: null,
@@ -564,10 +621,15 @@ export function answer(room: Room, playerId: string, result: AnswerResult): void
 
   // The first team home is the winner, but everyone else keeps playing. Only
   // once every racing team is done is there nothing left to play for.
+  if (finished) endIfEveryoneFinished(room, now);
+}
+
+function endIfEveryoneFinished(room: Room, at: number = Date.now()): void {
+  if (room.state !== 'playing') return;
   const racing = Object.entries(room.decks)
     .filter(([team]) => isTeamActive(room, team))
     .map(([, d]) => d);
-  if (finished && racing.length && racing.every((d) => d.finishedAt)) finishRound(room, now);
+  if (racing.length && racing.every((d) => d.finishedAt)) finishRound(room, at);
 }
 
 /** Ends the round if the clock has run out. Safe to call on every read. */

@@ -15,6 +15,7 @@ import {
   getRoomForRead,
   joinRoom,
   joinTeam,
+  leaveTeam,
   removePlayer,
   removeTeam,
   renamePlayer,
@@ -159,8 +160,11 @@ export async function POST(request: Request, ctx: Ctx) {
           createTeam(draft, self().id, clean(body.team, 16));
           break;
         }
+        case 'leaveTeam': {
+          leaveTeam(draft, self().id);
+          break;
+        }
         case 'removeTeam': {
-          if (draft.state === 'playing') throw new HttpError(409, 'Not while a round is running');
           removeTeam(draft, clean(body.team, 16));
           break;
         }
@@ -177,6 +181,7 @@ export async function POST(request: Request, ctx: Ctx) {
             durationSec: body.durationSec as number,
             categoryIds: body.categoryIds as string[],
             skipPenalty: body.skipPenalty as boolean,
+            rotateCategories: body.rotateCategories as boolean,
           });
           break;
         }
