@@ -22,6 +22,7 @@ import {
   streakTier,
   teamColor,
 } from '@/lib/ui';
+import { useConfirm } from '@/components/ConfirmDialog';
 import type { RoomView } from '@/lib/serialize';
 import type { Bank } from '@/lib/types';
 
@@ -170,6 +171,8 @@ export default function RoomClient({ code }: { code: string }) {
     [code, applyView, refresh],
   );
 
+  const teamActions = useTeamActions(view, act);
+
   async function join() {
     const name = joinName.trim();
     if (!name) return setError('Enter your name');
@@ -306,16 +309,7 @@ export default function RoomClient({ code }: { code: string }) {
         color={you.team ? teamColor(room.teams, you.team) : undefined}
         admin={admin}
         onLeave={leave}
-        onLeaveTeam={
-          you.team
-            ? () =>
-                confirm(
-                  room.state === 'playing'
-                    ? `Leave ${you.team}? Your card goes back to the team and you stop playing this round.`
-                    : `Leave ${you.team}?`,
-                ) && act({ action: 'leaveTeam' })
-            : undefined
-        }
+        onLeaveTeam={you.team ? () => void teamActions.leaveTeam(you.team) : undefined}
       />
       {error && <div className="err">{error}</div>}
 
@@ -366,6 +360,52 @@ export default function RoomClient({ code }: { code: string }) {
 }
 
 /* ============================================================== components */
+
+/**
+ * Leaving and removing teams, each behind Charade's own confirm dialog. Shared
+ * by the header, the lobby chips, the admin panel and Manage teams.
+ */
+function useTeamActions(view: RoomView | null, act: Act) {
+  const confirm = useConfirm();
+  const playing = view?.room.state === 'playing';
+
+  const leaveTeam = useCallback(
+    async (team: string) => {
+      const ok = await confirm({
+        icon: '🚪',
+        title: `Leave ${team}?`,
+        message: playing
+          ? 'Your card goes back to the team and you stop playing this round. You can join a team again any time.'
+          : 'You can join this team or another one again any time.',
+        confirmLabel: 'Leave team',
+        cancelLabel: 'Stay',
+      });
+      if (ok) await act({ action: 'leaveTeam' });
+    },
+    [confirm, act, playing],
+  );
+
+  const removeTeam = useCallback(
+    async (team: string) => {
+      const size = view?.room.players.filter((p) => p.team === team).length ?? 0;
+      const who = size
+        ? `${size} ${size === 1 ? 'player goes' : 'players go'} back to picking a team.`
+        : 'Nobody is on it.';
+      const ok = await confirm({
+        danger: true,
+        title: `Remove team ${team}?`,
+        message: playing
+          ? `${who} The team drops out of this round; points it already scored stay on the overall dashboard.`
+          : who,
+        confirmLabel: 'Remove team',
+      });
+      if (ok) await act({ action: 'removeTeam', team });
+    },
+    [confirm, act, playing, view?.room.players],
+  );
+
+  return { leaveTeam, removeTeam };
+}
 
 function Header({
   code,
@@ -605,6 +645,7 @@ function Lobby({
   admin: boolean;
 }) {
   const { room } = view;
+  const teamActions = useTeamActions(view, act);
   const [copied, setCopied] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(view.you?.name ?? '');
@@ -685,7 +726,9 @@ function Lobby({
                   {view.you?.team}
                 </span>
               </div>
-              {!view.you?.playing && <span className="muted">Your team sits out this round</span>}
+              {view.you?.team && !view.you.playing && (
+                <span className="muted">Your team sits out this round</span>
+              )}
             </div>
           )}
         </div>
@@ -700,24 +743,42 @@ function Lobby({
         <div className="section">
           <h3>{view.you?.team ? 'Your team' : 'Teams'}</h3>
           <div className="row">
-            {room.teams.map((team) => (
-              <button
-                key={team}
-                className={`chip${view.you?.team === team ? ' on' : ''}`}
-                disabled={busy}
-                onClick={() => act({ action: 'joinTeam', team })}
-              >
-                <i
-                  className="dot"
-                  style={{
-                    background:
-                      view.you?.team === team ? 'currentColor' : teamColor(room.teams, team),
-                  }}
-                />
-                {team}
-                <span className="muted">{room.players.filter((p) => p.team === team).length}</span>
-              </button>
-            ))}
+            {room.teams.map((team) => {
+              const mine = view.you?.team === team;
+              return (
+                <span key={team} className={`chip-group${admin ? ' removable' : ''}`}>
+                  <button
+                    className={`chip${mine ? ' on' : ''}`}
+                    disabled={busy}
+                    title={mine ? `Leave ${team}` : `Join ${team}`}
+                    // First click joins; clicking your own team again leaves it.
+                    onClick={() =>
+                      mine ? void teamActions.leaveTeam(team) : act({ action: 'joinTeam', team })
+                    }
+                  >
+                    <i
+                      className="dot"
+                      style={{ background: mine ? 'currentColor' : teamColor(room.teams, team) }}
+                    />
+                    {team}
+                    <span className="muted">
+                      {room.players.filter((p) => p.team === team).length}
+                    </span>
+                  </button>
+                  {admin && (
+                    <button
+                      className="chip-x"
+                      disabled={busy}
+                      title={`Remove ${team}`}
+                      aria-label={`Remove team ${team}`}
+                      onClick={() => void teamActions.removeTeam(team)}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
+              );
+            })}
           </div>
           <div className="row" style={{ flexWrap: 'nowrap', marginTop: 10 }}>
             <input
@@ -803,6 +864,7 @@ function AdminPanel({
   act: Act;
 }) {
   const { room } = view;
+  const teamActions = useTeamActions(view, act);
   const [duration, setDuration] = useState(room.settings.durationSec);
   const [custom, setCustom] = useState(String(room.settings.durationSec));
 
@@ -953,15 +1015,13 @@ function AdminPanel({
                   {active ? 'In' : 'Out'}
                 </button>
                 <button
-                  className="btn sm ghost"
+                  className="chip-x solo"
                   title={`Remove ${team}`}
+                  aria-label={`Remove team ${team}`}
                   disabled={busy}
-                  onClick={() =>
-                    confirm(`Remove team “${team}”? Its players go back to picking a team.`) &&
-                    act({ action: 'removeTeam', team })
-                  }
+                  onClick={() => void teamActions.removeTeam(team)}
                 >
-                  Remove
+                  ✕
                 </button>
               </div>
             );
@@ -1375,6 +1435,7 @@ function LiveDashboard({
 /** Admin-only: remove a team at any point, including mid-round. */
 function ManageTeams({ view, busy, act }: { view: RoomView; busy: boolean; act: Act }) {
   const { room } = view;
+  const teamActions = useTeamActions(view, act);
   if (!room.teams.length) return null;
   return (
     <details className="card manage-teams">
@@ -1393,17 +1454,13 @@ function ManageTeams({ view, busy, act }: { view: RoomView; busy: boolean; act: 
                 </span>
               </span>
               <button
-                className="btn sm danger"
+                className="chip-x solo"
                 disabled={busy}
-                onClick={() =>
-                  confirm(
-                    room.state === 'playing'
-                      ? `Remove team “${team}” from this round? Its players go back to picking a team; points already scored stay on the overall dashboard.`
-                      : `Remove team “${team}”? Its players go back to picking a team.`,
-                  ) && act({ action: 'removeTeam', team })
-                }
+                title={`Remove ${team}`}
+                aria-label={`Remove team ${team}`}
+                onClick={() => void teamActions.removeTeam(team)}
               >
-                Remove
+                ✕
               </button>
             </div>
           );

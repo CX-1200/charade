@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 type RoomRow = {
   code: string;
@@ -34,6 +35,7 @@ function ago(ts: number): string {
 
 export default function ManageRoomsPage() {
   const [admin, setAdmin] = useAdmin();
+  const confirm = useConfirm();
   const [rooms, setRooms] = useState<RoomRow[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -60,11 +62,16 @@ export default function ManageRoomsPage() {
   }, [admin, load]);
 
   async function close(room: RoomRow) {
-    const warning =
-      room.online > 0
-        ? `Close room ${room.code}? ${room.online} ${room.online === 1 ? 'person is' : 'people are'} in it right now and will be dropped.`
-        : `Close room ${room.code}? Its teams and scores are deleted for good.`;
-    if (!confirm(warning)) return;
+    const ok = await confirm({
+      danger: true,
+      title: `Close room ${room.code}?`,
+      message:
+        room.online > 0
+          ? `${room.online} ${room.online === 1 ? 'person is' : 'people are'} in it right now and will be dropped. Its teams and scores are deleted for good.`
+          : 'Its teams and scores are deleted for good.',
+      confirmLabel: 'Close room',
+    });
+    if (!ok) return;
     setBusy(room.code);
     try {
       await post('/api/admin/rooms', {

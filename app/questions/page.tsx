@@ -5,9 +5,14 @@ import Link from 'next/link';
 import { api, post, session } from '@/lib/client';
 import { parseQuestionsCsv, toQuestionsCsv } from '@/lib/csv';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
+import { useConfirm } from '@/components/ConfirmDialog';
 import type { Bank } from '@/lib/types';
 
-type Storage = { driver: 'turso' | 'redis' | 'file' | 'memory'; durable: boolean; shared?: boolean };
+type Storage = {
+  driver: 'turso' | 'redis' | 'file' | 'memory';
+  durable: boolean;
+  shared?: boolean;
+};
 type Backup = { path: string; categories: number; questions: number } | null;
 type Report = { rows: number; skipped: number; categories: number } | null;
 
@@ -57,6 +62,7 @@ type BankResponse = { bank: Bank; storage?: Storage; backup?: Backup; report?: R
 
 export default function QuestionsPage() {
   const [admin, setAdmin] = useAdmin();
+  const confirm = useConfirm();
   const [bank, setBank] = useState<Bank | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState('');
@@ -155,14 +161,19 @@ export default function QuestionsPage() {
           kind,
           text,
           categories: cats.length,
-          questions: cats.reduce((sum, c) => sum + (Array.isArray(c.items) ? c.items.length : 0), 0),
+          questions: cats.reduce(
+            (sum, c) => sum + (Array.isArray(c.items) ? c.items.length : 0),
+            0,
+          ),
           skipped: 0,
         });
         return;
       }
       const parsed = parseQuestionsCsv(text);
       if (!parsed.categories.length) {
-        throw new Error('No questions found — the file needs a category column and a question column');
+        throw new Error(
+          'No questions found — the file needs a category column and a question column',
+        );
       }
       setPending({
         fileName: file.name,
@@ -190,18 +201,30 @@ export default function QuestionsPage() {
       const skipped = lastReport.current?.skipped ?? 0;
       setNote(
         `${mode === 'replace' ? 'Replaced' : 'Merged'} — the bank now holds ${next.categories.length} categories and ${total} questions` +
-          (skipped ? ` (${skipped} empty ${skipped === 1 ? 'row was' : 'rows were'} skipped)` : '') +
+          (skipped
+            ? ` (${skipped} empty ${skipped === 1 ? 'row was' : 'rows were'} skipped)`
+            : '') +
           '.',
       );
     }
   }
 
   async function restoreFromRepo(mode: 'replace' | 'merge') {
-    const warning =
+    const ok = await confirm(
       mode === 'replace'
-        ? 'Replace the whole bank with the copy saved in the repository? Questions added on this site since then are removed.'
-        : 'Merge the repository copy into the current bank? Nothing is removed.';
-    if (!confirm(warning)) return;
+        ? {
+            danger: true,
+            title: 'Replace the bank with the repository copy?',
+            message: 'Questions added on this site since then are removed.',
+            confirmLabel: 'Replace bank',
+          }
+        : {
+            title: 'Merge the repository copy into the bank?',
+            message: 'Nothing is removed.',
+            confirmLabel: 'Merge',
+          },
+    );
+    if (!ok) return;
     const next = await mutate({ action: 'restoreFromRepo', mode });
     if (next) {
       const total = next.categories.reduce((sum, c) => sum + c.items.length, 0);
@@ -287,7 +310,7 @@ export default function QuestionsPage() {
         <div className="card">
           <h2>📦 A question bank from demo mode</h2>
           <p className="sub" style={{ marginBottom: 14 }}>
-This browser still holds the bank it built back when demo mode existed —{' '}
+            This browser still holds the bank it built back when demo mode existed —{' '}
             <b>
               {strandedBank.categories.length} categories,{' '}
               {strandedBank.categories.reduce((sum, c) => sum + c.items.length, 0)} questions
@@ -295,15 +318,23 @@ This browser still holds the bank it built back when demo mode existed —{' '}
             . The server has its own copy now, so move this one over or discard it.
           </p>
           <div className="row tight">
-            <button className="btn primary sm" disabled={busy} onClick={() => adoptDemoBank('merge')}>
+            <button
+              className="btn primary sm"
+              disabled={busy}
+              onClick={() => adoptDemoBank('merge')}
+            >
               Merge into the server bank
             </button>
             <button
               className="btn sm"
               disabled={busy}
-              onClick={() =>
-                confirm('Replace the server bank entirely with the demo one?') &&
-                adoptDemoBank('replace')
+              onClick={async () =>
+                (await confirm({
+                  danger: true,
+                  title: 'Replace the server bank with the demo one?',
+                  message: 'Everything currently in the server bank is replaced.',
+                  confirmLabel: 'Replace bank',
+                })) && adoptDemoBank('replace')
               }
             >
               Replace the server bank
@@ -311,8 +342,14 @@ This browser still holds the bank it built back when demo mode existed —{' '}
             <button
               className="btn ghost sm"
               disabled={busy}
-              onClick={() => {
-                if (confirm('Discard the demo bank? This cannot be undone.')) {
+              onClick={async () => {
+                const ok = await confirm({
+                  danger: true,
+                  title: 'Discard the demo bank?',
+                  message: 'This cannot be undone.',
+                  confirmLabel: 'Discard',
+                });
+                if (ok) {
                   clearDemoBank();
                   setStrandedBank(null);
                 }
@@ -383,9 +420,13 @@ This browser still holds the bank it built back when demo mode existed —{' '}
                 <button
                   className="btn sm"
                   disabled={busy}
-                  onClick={() =>
-                    confirm('Replace the whole bank with this file? Anything not in it is removed.') &&
-                    confirmImport('replace')
+                  onClick={async () =>
+                    (await confirm({
+                      danger: true,
+                      title: 'Replace the whole bank with this file?',
+                      message: 'Anything not in the file is removed.',
+                      confirmLabel: 'Replace everything',
+                    })) && confirmImport('replace')
                   }
                 >
                   Replace everything
@@ -476,11 +517,15 @@ This browser still holds the bank it built back when demo mode existed —{' '}
                     <span className="count">{category.items.length}</span>
                     <button
                       className="btn sm danger"
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        if (confirm(`Delete “${category.name}” and all of its questions?`)) {
-                          void mutate({ action: 'deleteCategory', categoryId: category.id });
-                        }
+                        const ok = await confirm({
+                          danger: true,
+                          title: `Delete ${category.name}?`,
+                          message: `All ${category.items.length} of its questions are deleted too.`,
+                          confirmLabel: 'Delete category',
+                        });
+                        if (ok) void mutate({ action: 'deleteCategory', categoryId: category.id });
                       }}
                     >
                       Delete
@@ -544,8 +589,8 @@ This browser still holds the bank it built back when demo mode existed —{' '}
 
       <div className="card">
         <p className="muted" style={{ margin: 0 }}>
-          💡 When a round starts, every category the admin selected is <b>shuffled into one deck</b>.
-          Players draw from it in turn, so nobody gets the same question twice.
+          💡 When a round starts, every category the admin selected is <b>shuffled into one deck</b>
+          . Players draw from it in turn, so nobody gets the same question twice.
         </p>
       </div>
     </main>
