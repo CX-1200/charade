@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
 import {
-  CATEGORY_COLORS,
   clean,
-  exportBank,
   getBank,
   HttpError,
   id,
@@ -13,6 +11,8 @@ import {
   updateBank,
 } from '@/lib/game';
 import { parseQuestionsCsv } from '@/lib/csv';
+import { CATEGORY_COLORS } from '@/lib/ui';
+import { fail, readJson } from '@/lib/http';
 import { storeDriver, storeIsDurable, storeIsShared } from '@/lib/store';
 
 /** A few thousand questions is well under this; it only stops runaway uploads. */
@@ -34,22 +34,24 @@ function backupSummary() {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * The questions are the answers to the game: anyone who could read them could
+ * see every word before acting it out. So the bank is admin-only, reads too.
+ */
 export async function GET(request: Request) {
-  const bank = await getBank();
-  // ?export=1 returns the portable snapshot an admin can save and re-import.
-  if (new URL(request.url).searchParams.get('export')) {
-    return NextResponse.json(exportBank(bank), {
-      headers: {
-        'Content-Disposition': `attachment; filename="charade-question-bank.json"`,
-      },
-    });
+  try {
+    requireAdmin(request.headers.get('x-admin-token'));
+    const bank = await getBank();
+    return NextResponse.json({ bank, storage, backup: backupSummary() });
+  } catch (error) {
+    return fail(error);
   }
-  return NextResponse.json({ bank, storage, backup: backupSummary() });
 }
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Record<string, unknown>;
+    // Room for a CSV import (capped separately below) plus the envelope.
+    const body = await readJson(request, MAX_CSV_BYTES + 64_000);
     // The question bank is shared by every room, so only admins may edit it.
     requireAdmin(body.adminToken);
     const action = String(body.action ?? '');
@@ -145,18 +147,20 @@ export async function POST(request: Request) {
           const backup = readRepoBackup();
           if (!backup) throw new HttpError(404, `No backup found at ${REPO_BACKUP_PATH}`);
           importBank(draft, backup, body.mode === 'merge' ? 'merge' : 'replace');
-          report = { rows: backup.rows, skipped: backup.skipped, categories: backup.categories.length };
+          report = {
+            rows: backup.rows,
+            skipped: backup.skipped,
+            categories: backup.categories.length,
+          };
           break;
         }
         default:
-          throw new HttpError(400, `Unknown action: ${action}`);
+          throw new HttpError(400, 'Unknown action');
       }
     });
 
     return NextResponse.json({ bank, storage, backup: backupSummary(), report });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
-    const message = error instanceof Error ? error.message : 'Server error';
-    return NextResponse.json({ error: message }, { status });
+    return fail(error);
   }
 }

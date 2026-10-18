@@ -6,8 +6,16 @@ import { HttpError } from './errors';
  * There are no accounts here — the token only says "someone knew the password",
  * which is exactly the trust level a party game needs.
  */
-const PASSWORD = process.env.ADMIN_PASSWORD || 'charade';
-const SECRET = process.env.ADMIN_SECRET || `charade-admin:${PASSWORD}`;
+/**
+ * A deployed site never falls back to a well-known password: without
+ * ADMIN_PASSWORD set, admin stays locked. Only local development gets the
+ * convenience default.
+ */
+const PASSWORD =
+  process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? null : 'charade');
+const SECRET = process.env.ADMIN_SECRET || `charade-admin:${PASSWORD ?? ''}`;
+
+export const adminConfigured = PASSWORD !== null;
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 12;
 
 function sign(payload: string): string {
@@ -21,7 +29,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export function checkPassword(input: unknown): boolean {
-  return typeof input === 'string' && safeEqual(input, PASSWORD);
+  return PASSWORD !== null && typeof input === 'string' && safeEqual(input, PASSWORD);
 }
 
 export function issueToken(): { token: string; expiresAt: number } {
@@ -30,6 +38,7 @@ export function issueToken(): { token: string; expiresAt: number } {
 }
 
 export function isAdmin(token: unknown): boolean {
+  if (!adminConfigured) return false;
   if (typeof token !== 'string' || !token.includes('.')) return false;
   const [exp, signature] = token.split('.', 2);
   const expiresAt = Number(exp);

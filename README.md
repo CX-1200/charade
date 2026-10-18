@@ -32,7 +32,7 @@ Teams belong to the players. Creating a room no longer asks anyone to name one; 
 
 **Closing a room there is the only thing in this app that destroys a room.** Nothing expires: rooms carry no lifetime, no idle timeout and no storage TTL, and an empty room keeps its code, teams and scores until an admin closes it. If everyone leaves and comes back an hour later, the same code still works and the first person back becomes host.
 
-Admin is unlocked on the home page: hit `🔒 Admin`, type the password, and the browser keeps an HMAC-signed token for 12 hours. The server checks that token on every privileged action, so hiding the panel is not the security boundary. Set `ADMIN_PASSWORD` before sharing the link — it defaults to `charade`.
+Admin is unlocked on the home page: hit `🔒 Admin`, type the password, and the browser keeps an HMAC-signed token for 12 hours. The server checks that token on every privileged action, so hiding the panel is not the security boundary. A deployed site has **no default password**: until `ADMIN_PASSWORD` is set, admin stays locked (only local development falls back to `charade`). Ten wrong passwords from one address lock that address out for 15 minutes.
 
 ## How a game goes
 
@@ -55,7 +55,7 @@ Scoring: correct `+1`, skip `0` (the admin can turn on "skips cost 1 point"). Po
 
 Each player has two values. The **player ID** is public — every screen in the room receives it, because that is how players are listed and how an admin points at someone to remove them. The **player secret** is a random 192-bit **bearer token** handed only to that player's browser when they join, and every action taken as that player (answering, changing team, leaving) must present it. So seeing someone's ID lets you do nothing as them.
 
-The server stores only a **SHA-256 hash** of each secret and compares in constant time. Browsers send credentials in request **headers**, never in the URL, since URLs end up in logs and history. Players who joined before this existed simply rejoin once under the same name and take their old place back.
+The server stores only a **SHA-256 hash** of each secret and compares in constant time. Browsers send credentials in request **headers**, never in the URL, since URLs end up in logs and history.
 
 ## Scale
 
@@ -145,6 +145,16 @@ Older JSON exports still import.
 
 Local runs keep the file store in `.data/charade.json` (git-ignored). Point `CHARADE_DATA_DIR` somewhere else to move it, or set `CHARADE_DISABLE_FILE_STORE=1` to force the memory driver.
 
+## Security
+
+- **Admin**: one shared password (`ADMIN_PASSWORD`) → HMAC-signed token valid 12 h, checked server-side on every privileged action. No default password in production; wrong guesses are rate-limited per IP in the shared database.
+- **Players**: a public player ID plus a private secret per player (only its SHA-256 hash is stored, compared in constant time). Every action as a player needs the secret; credentials travel in headers, never URLs.
+- **The questions are the answers**: the question bank API is admin-only (reads included), the live feed hides words until the round ends, and each player only ever receives their own card.
+- **Input limits**: JSON bodies are size-capped, room codes are validated before touching the database, rooms hold at most 120 people, names and questions are length-capped.
+- **Errors**: unexpected server errors are logged and answered with a generic message, so database details never reach the browser.
+- **Browser headers**: Content-Security-Policy (same-origin only, no framing), `X-Frame-Options: DENY`, `nosniff`, a strict referrer policy and a Permissions-Policy.
+- **Keep the repository private** if it holds your real questions: `data/questions.csv` is the bank's backup, and a public repo publishes every answer.
+
 ## Design
 
 Two brand colours run the whole UI: warm cream `#e0dace` as the ground and signal red `#de2c00` for every primary action, the leading team, the live progress bar and the low-time warning. Everything else is ink on cream.
@@ -173,6 +183,8 @@ lib/
   admin.ts                   Password check and HMAC-signed admin tokens
   store.ts                   KV store: turso / redis / file / memory drivers + locking
   auth.ts                    Player secrets: issue, hash, verify
+  http.ts                    Shared API error responses and size-capped JSON parsing
+  ratelimit.ts               Admin login attempt limiting
   serialize.ts               The room view sent to clients (the deck never leaves the server; questions hidden from the feed mid-round)
   types.ts, ui.ts, client.ts Types, shared constants, fetch helpers
 data/

@@ -101,10 +101,17 @@ export default function RoomClient({ code }: { code: string }) {
 
   useEffect(() => {
     void refresh();
-    api<{ bank: Bank }>('/api/bank')
+  }, [refresh]);
+
+  // Only the admin's host settings list categories, and the bank is admin-only.
+  const isAdminView = !!view?.admin;
+  useEffect(() => {
+    const token = session.getAdminToken();
+    if (!isAdminView || !token) return;
+    api<{ bank: Bank }>('/api/bank', { headers: { 'x-admin-token': token } })
       .then((data) => setBank(data.bank))
       .catch(() => undefined);
-  }, [refresh]);
+  }, [isAdminView]);
 
   const [hidden, setHidden] = useState(false);
   useEffect(() => {

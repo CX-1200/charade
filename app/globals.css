@@ -460,8 +460,6 @@ input[type='checkbox'] { width: 17px; height: 17px; accent-color: var(--accent);
 .section-head h3 { margin: 0; }
 
 .chip.off { opacity: 0.55; border-style: dashed; }
-.chip .x { color: inherit; opacity: 0.65; font-weight: 700; padding-left: 2px; }
-.chip .x:hover { opacity: 1; }
 
 .team-row {
   display: flex;

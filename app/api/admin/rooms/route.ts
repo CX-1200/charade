@@ -1,17 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
 import { HttpError } from '@/lib/errors';
+import { fail, readJson } from '@/lib/http';
 import { closeRoom, listRooms, roundScores } from '@/lib/game';
 
 export const dynamic = 'force-dynamic';
-
-function fail(error: unknown) {
-  const status = error instanceof HttpError ? error.status : 500;
-  return NextResponse.json(
-    { error: error instanceof Error ? error.message : 'Server error' },
-    { status },
-  );
-}
 
 /** Every open room, for the admin's Manage rooms page. */
 export async function GET(request: Request) {
@@ -40,13 +33,9 @@ export async function GET(request: Request) {
 /** Closing a room here is the only thing in the app that destroys one. */
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      adminToken?: string;
-      code?: string;
-      action?: string;
-    };
+    const body = await readJson(request);
     requireAdmin(body.adminToken);
-    if (body.action !== 'close') throw new HttpError(400, `Unknown action: ${body.action}`);
+    if (body.action !== 'close') throw new HttpError(400, 'Unknown action');
     const code = String(body.code ?? '').toUpperCase();
     if (!code) throw new HttpError(400, 'Which room?');
     const existed = await closeRoom(code);

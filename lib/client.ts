@@ -34,7 +34,7 @@ const ADMIN_KEY = 'charade:admin';
  * `charade:pid:` — an id alone proves nothing, so those are simply ignored.)
  */
 const seatKey = (code: string) => `charade:seat:${code.toUpperCase()}`;
-export type Seat = { playerId: string; secret: string };
+type Seat = { playerId: string; secret: string };
 
 function safe<T>(fn: () => T, fallback: T): T {
   try {

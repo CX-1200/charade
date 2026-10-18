@@ -16,6 +16,12 @@ const ROOM_INDEX_KEY = 'charade:rooms';
 
 const roomKey = (code: string) => `charade:room:${code.toUpperCase()}`;
 
+/**
+ * Room codes are 4 characters from a fixed alphabet. Anything else is refused
+ * before it reaches the database — a junk code costs no read, and no lock write.
+ */
+const isRoomCode = (code: string) => /^[A-Z0-9]{4}$/.test(code.toUpperCase());
+
 /** Rooms this process has already put in the index — saves a write per save. */
 const indexed = new Set<string>();
 
@@ -37,6 +43,7 @@ function remember(room: Room): void {
 
 /** For read-only views. Anything that writes must use withRoom instead. */
 export async function getRoomForRead(code: string): Promise<Room | null> {
+  if (!isRoomCode(code)) return null;
   const key = code.toUpperCase();
   const hit = readCache.get(key);
   if (hit && Date.now() - hit.at < READ_CACHE_MS) return structuredClone(hit.room);
@@ -114,8 +121,8 @@ export async function updateBank(mutate: (bank: Bank) => void): Promise<Bank> {
 
 /* ------------------------------------------------------------------ room */
 
-export async function getRoom(code: string): Promise<Room | null> {
-  if (!code) return null;
+async function getRoom(code: string): Promise<Room | null> {
+  if (!isRoomCode(code)) return null;
   const room = await kvGet<Room>(roomKey(code));
   return room ? normalizeRoom(room) : null;
 }
@@ -125,7 +132,7 @@ export async function getRoom(code: string): Promise<Room | null> {
  * rooms is the only thing that ever removes a room. Nothing here times out, and
  * an empty room keeps its code, teams and scores until somebody closes it.
  */
-export async function saveRoom(room: Room): Promise<Room> {
+async function saveRoom(room: Room): Promise<Room> {
   room.updatedAt = Date.now();
   await kvSet(roomKey(room.code), room);
   remember(room);
@@ -165,6 +172,7 @@ export async function withRoom(
   code: string,
   mutate: (room: Room) => void | Promise<void>,
 ): Promise<Room> {
+  if (!isRoomCode(code)) throw new HttpError(404, 'Room not found');
   return withLock(roomKey(code), async () => {
     const room = await getRoom(code);
     if (!room) throw new HttpError(404, 'Room not found');
@@ -179,6 +187,8 @@ export async function createRoom(hostName: string, hostSecretHash: string): Prom
   const bank = await getBank();
   let code = roomCode();
   for (let attempt = 0; attempt < 8 && (await getRoom(code)); attempt += 1) code = roomCode();
+  // Never overwrite a live room, however unlikely eight collisions in a row are.
+  if (await getRoom(code)) throw new HttpError(503, 'Could not find a free room code — try again');
   return saveRoom(
     makeRoom(
       code,

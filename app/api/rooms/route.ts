@@ -3,16 +3,14 @@ import { requireAdmin } from '@/lib/admin';
 import { newSecret } from '@/lib/auth';
 import { clean, createRoom, getBank } from '@/lib/game';
 import { HttpError } from '@/lib/errors';
+import { fail, readJson } from '@/lib/http';
 import { publicRoom } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      name?: string;
-      adminToken?: string;
-    };
+    const body = await readJson(request);
     // Only an unlocked admin opens rooms.
     requireAdmin(body.adminToken);
     const name = clean(body.name, 20);
@@ -29,10 +27,6 @@ export async function POST(request: Request) {
       code: room.code,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Server error' },
-      { status },
-    );
+    return fail(error);
   }
 }

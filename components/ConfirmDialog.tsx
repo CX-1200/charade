@@ -10,7 +10,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
  *   const confirm = useConfirm();
  *   if (await confirm({ title: 'Leave Reds?', confirmLabel: 'Leave team' })) …
  */
-export type ConfirmOptions = {
+type ConfirmOptions = {
   title: string;
   message?: string;
   confirmLabel?: string;

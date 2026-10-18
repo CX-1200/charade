@@ -33,31 +33,6 @@ const STORE_LABEL: Record<Storage['driver'], string> = {
   memory: 'this server’s memory',
 };
 
-/**
- * Demo mode is gone, but a browser that ran one may still hold the bank it
- * built there. Offer to rescue it once, then the key is cleared for good.
- * Safe to delete this and its card once no browser has one left.
- */
-const LEGACY_DEMO_BANK_KEY = 'charade:demo:bank';
-
-function readDemoBank(): Bank | null {
-  try {
-    const raw = localStorage.getItem(LEGACY_DEMO_BANK_KEY);
-    const bank = raw ? (JSON.parse(raw) as Bank) : null;
-    return bank?.categories?.length ? bank : null;
-  } catch {
-    return null;
-  }
-}
-
-function clearDemoBank(): void {
-  try {
-    localStorage.removeItem(LEGACY_DEMO_BANK_KEY);
-    localStorage.removeItem('charade:demoMode');
-  } catch {
-    /* nothing to clear */
-  }
-}
 type BankResponse = { bank: Bank; storage?: Storage; backup?: Backup; report?: Report };
 
 export default function QuestionsPage() {
@@ -75,8 +50,6 @@ export default function QuestionsPage() {
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const lastReport = useRef<Report>(null);
-  // A bank left behind by the old demo mode, if this browser ran one.
-  const [strandedBank, setStrandedBank] = useState<Bank | null>(null);
 
   const active = useMemo(
     () => bank?.categories.find((c) => c.id === activeId) ?? bank?.categories[0] ?? null,
@@ -87,16 +60,18 @@ export default function QuestionsPage() {
     [bank],
   );
 
+  // The questions are the answers to the game, so only an admin may read them.
   useEffect(() => {
-    setStrandedBank(readDemoBank());
-    api<BankResponse>('/api/bank')
+    const token = session.getAdminToken();
+    if (!admin || !token) return;
+    api<BankResponse>('/api/bank', { headers: { 'x-admin-token': token } })
       .then((data) => {
         setBank(data.bank);
         setStorage(data.storage ?? null);
         setBackup(data.backup ?? null);
       })
       .catch((e) => setError((e as Error).message));
-  }, []);
+  }, [admin]);
 
   async function mutate(body: Record<string, unknown>) {
     setError('');
@@ -234,29 +209,6 @@ export default function QuestionsPage() {
     }
   }
 
-  async function adoptDemoBank(mode: 'merge' | 'replace') {
-    if (!strandedBank) return;
-    const next = await mutate({
-      action: 'import',
-      mode,
-      data: {
-        categories: strandedBank.categories.map((c) => ({
-          name: c.name,
-          color: c.color,
-          items: c.items.map((i) => i.text),
-        })),
-      },
-    });
-    if (next) {
-      clearDemoBank();
-      setStrandedBank(null);
-      const total = next.categories.reduce((sum, c) => sum + c.items.length, 0);
-      setNote(
-        `Moved over — the server bank now holds ${next.categories.length} categories and ${total} questions.`,
-      );
-    }
-  }
-
   async function addItems() {
     if (!active || !draft.trim()) return;
     const ok = await mutate({ action: 'addItems', categoryId: active.id, texts: [draft] });
@@ -305,61 +257,6 @@ export default function QuestionsPage() {
 
       {error && <div className="err">{error}</div>}
       {note && <div className="notice">{note}</div>}
-
-      {strandedBank && (
-        <div className="card">
-          <h2>📦 A question bank from demo mode</h2>
-          <p className="sub" style={{ marginBottom: 14 }}>
-            This browser still holds the bank it built back when demo mode existed —{' '}
-            <b>
-              {strandedBank.categories.length} categories,{' '}
-              {strandedBank.categories.reduce((sum, c) => sum + c.items.length, 0)} questions
-            </b>
-            . The server has its own copy now, so move this one over or discard it.
-          </p>
-          <div className="row tight">
-            <button
-              className="btn primary sm"
-              disabled={busy}
-              onClick={() => adoptDemoBank('merge')}
-            >
-              Merge into the server bank
-            </button>
-            <button
-              className="btn sm"
-              disabled={busy}
-              onClick={async () =>
-                (await confirm({
-                  danger: true,
-                  title: 'Replace the server bank with the demo one?',
-                  message: 'Everything currently in the server bank is replaced.',
-                  confirmLabel: 'Replace bank',
-                })) && adoptDemoBank('replace')
-              }
-            >
-              Replace the server bank
-            </button>
-            <button
-              className="btn ghost sm"
-              disabled={busy}
-              onClick={async () => {
-                const ok = await confirm({
-                  danger: true,
-                  title: 'Discard the demo bank?',
-                  message: 'This cannot be undone.',
-                  confirmLabel: 'Discard',
-                });
-                if (ok) {
-                  clearDemoBank();
-                  setStrandedBank(null);
-                }
-              }}
-            >
-              Discard
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="card">
         <h2>Spreadsheet &amp; backup</h2>

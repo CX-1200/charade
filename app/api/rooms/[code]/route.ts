@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { isAdmin, requireAdmin } from '@/lib/admin';
 import { authenticate, newSecret, requireAuthenticated } from '@/lib/auth';
 import { HttpError } from '@/lib/errors';
+import { fail, readJson } from '@/lib/http';
 import {
   answer,
   applySettings,
@@ -9,7 +10,6 @@ import {
   clean,
   clearHistory,
   createTeam,
-  findUnclaimedPlayer,
   finishRound,
   getBank,
   getRoomForRead,
@@ -53,18 +53,15 @@ const ADMIN_ACTIONS = new Set([
   'kick',
 ]);
 
-function fail(error: unknown) {
-  const status = error instanceof HttpError ? error.status : 500;
-  return NextResponse.json(
-    {
-      error: error instanceof Error ? error.message : 'Server error',
-      // A 404 on a code the player just used usually means the request landed
-      // on an instance that never saw the room, not that the room is gone.
-      ...(status === 404 ? { storage: { driver: storeDriver, durable: storeIsDurable } } : {}),
-    },
-    { status },
+/**
+ * A 404 on a code the player just used usually means the request landed on an
+ * instance that never saw the room, not that the room is gone — say which
+ * store answered so the page can explain.
+ */
+const failRoom = (error: unknown) =>
+  fail(error, (status) =>
+    status === 404 ? { storage: { driver: storeDriver, durable: storeIsDurable } } : {},
   );
-}
 
 /**
  * Poll endpoint: returns the room view and keeps the caller's presence warm.
@@ -105,14 +102,14 @@ export async function GET(request: Request, ctx: Ctx) {
     const bank = admin && room.state === 'lobby' ? await getBank() : null;
     return NextResponse.json(settleAndSerialize(room, playerId, { admin, bank }));
   } catch (error) {
-    return fail(error);
+    return failRoom(error);
   }
 }
 
 export async function POST(request: Request, ctx: Ctx) {
   try {
     const { code } = await ctx.params;
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await readJson(request);
     const action = String(body.action ?? '');
     const admin = isAdmin(body.adminToken);
     if (ADMIN_ACTIONS.has(action)) requireAdmin(body.adminToken);
@@ -135,10 +132,7 @@ export async function POST(request: Request, ctx: Ctx) {
           if (me) break; // already in, credentials still good
           const name = clean(body.name, 20);
           const { secret, hash } = newSecret();
-          const legacy = findUnclaimedPlayer(draft, name);
-          const player = legacy ?? joinRoom(draft, name, hash);
-          player.secretHash = hash;
-          player.lastSeen = Date.now();
+          const player = joinRoom(draft, name, hash);
           viewerId = player.id;
           issued = { playerId: player.id, secret };
           break;
@@ -217,7 +211,7 @@ export async function POST(request: Request, ctx: Ctx) {
           self();
           break;
         default:
-          throw new HttpError(400, `Unknown action: ${action}`);
+          throw new HttpError(400, 'Unknown action');
       }
     });
 
@@ -227,6 +221,6 @@ export async function POST(request: Request, ctx: Ctx) {
       ...(issued ?? {}),
     });
   } catch (error) {
-    return fail(error);
+    return failRoom(error);
   }
 }

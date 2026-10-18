@@ -30,11 +30,9 @@ export type Player = {
   lastSeen: number;
   /**
    * SHA-256 of the private secret handed to this player alone when they joined.
-   * Every action taken as this player must present the secret. Missing on
-   * players created before credentials existed — those are reclaimed by
-   * rejoining under the same name.
+   * Every action taken as this player must present the secret.
    */
-  secretHash?: string;
+  secretHash: string;
 };
 
 export type DeckEntry = {

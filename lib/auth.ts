@@ -22,7 +22,7 @@ export function newSecret(): { secret: string; hash: string } {
   return { secret, hash: hashSecret(secret) };
 }
 
-export function hashSecret(secret: string): string {
+function hashSecret(secret: string): string {
   return createHash('sha256').update(secret).digest('base64url');
 }
 

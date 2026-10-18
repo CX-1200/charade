@@ -15,14 +15,13 @@ import type {
 } from './types';
 
 export { HttpError };
-export { CATEGORY_COLORS, MAX_DURATION, MIN_DURATION, TEAM_COLORS } from './ui';
 
 /**
  * A round with 50 players generates thousands of answers. The room document is
  * read and written on every request, so the log is display-only and capped;
  * scores come from `tally`, which is exact however many answers there are.
  */
-export const MAX_LOG_ENTRIES = 200;
+const MAX_LOG_ENTRIES = 200;
 
 /**
  * A round starts this long after the admin presses Start. Screens learn about
@@ -31,10 +30,16 @@ export const MAX_LOG_ENTRIES = 200;
  * is longer than the slowest lobby poll, so everyone sees "3, 2, 1" and starts
  * answering at the same instant.
  */
-export const LEAD_IN_MS = 4000;
+const LEAD_IN_MS = 4000;
 
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const MAX_TEAMS = TEAM_COLORS.length;
+const MAX_TEAMS = TEAM_COLORS.length;
+/**
+ * Twice the size the game is built for (50 players + 10 judges). The whole
+ * room is one document rewritten on every answer, so an unbounded room would
+ * let anyone with the code slow it down for everybody by joining in a loop.
+ */
+const MAX_PLAYERS = 120;
 
 export function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
@@ -48,7 +53,7 @@ export function roomCode(): string {
   return out;
 }
 
-export function shuffle<T>(input: T[]): T[] {
+function shuffle<T>(input: T[]): T[] {
   const out = [...input];
   for (let i = out.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -103,26 +108,6 @@ export function seedBank(): Bank {
       })),
     })),
     updatedAt: now,
-  };
-}
-
-export type BankExport = {
-  format: 'charade-question-bank';
-  version: 1;
-  exportedAt: string;
-  categories: Array<{ name: string; color?: string; items: string[] }>;
-};
-
-export function exportBank(bank: Bank): BankExport {
-  return {
-    format: 'charade-question-bank',
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    categories: bank.categories.map((c) => ({
-      name: c.name,
-      color: c.color,
-      items: c.items.map((i) => i.text),
-    })),
   };
 }
 
@@ -217,6 +202,9 @@ export function normalizeRoom(room: Room): Room {
   room.playerTally ??= {};
   room.endedAt ??= null;
   room.settings.rotateCategories ??= true;
+  // Players from before credentials existed can never prove who they are, so
+  // they could never act again; clear them out rather than keep ghosts.
+  for (const ghost of room.players.filter((p) => !p.secretHash)) removePlayer(room, ghost.id);
   for (const round of room.history) round.teams ??= [];
   return room;
 }
@@ -268,18 +256,10 @@ export function makeRoom(
   };
 }
 
-/**
- * A player saved before credentials existed, with this name. Their public id
- * was the only thing needed to act as them, so anyone could already; letting
- * the first person to rejoin under that name take the record over — and secure
- * it — loses nothing and spares everyone a duplicate "Name (2)".
- */
-export function findUnclaimedPlayer(room: Room, name: string): Player | null {
-  const wanted = clean(name, 20).toLowerCase();
-  return room.players.find((p) => !p.secretHash && p.name.toLowerCase() === wanted) ?? null;
-}
-
 export function joinRoom(room: Room, name: string, secretHash: string): Player {
+  if (room.players.length >= MAX_PLAYERS) {
+    throw new HttpError(409, `This room is full (${MAX_PLAYERS} people)`);
+  }
   const cleanName = clean(name, 20) || 'Player';
   const taken = room.players.some((p) => p.name.toLowerCase() === cleanName.toLowerCase());
   const now = Date.now();
@@ -298,7 +278,7 @@ export function joinRoom(room: Room, name: string, secretHash: string): Player {
   return player;
 }
 
-export function requirePlayer(room: Room, playerId: string): Player {
+function requirePlayer(room: Room, playerId: string): Player {
   const player = room.players.find((p) => p.id === playerId);
   if (!player) throw new HttpError(403, 'You are not in this room — please join again');
   return player;
@@ -405,7 +385,7 @@ export function setTeamActive(room: Room, team: string, active: boolean): void {
   }
 }
 
-export function isTeamActive(room: Room, team: string): boolean {
+function isTeamActive(room: Room, team: string): boolean {
   return !!team && room.settings.activeTeams.includes(team);
 }
 
@@ -437,7 +417,7 @@ export function applySettings(room: Room, patch: Partial<RoomSettings>): void {
  * across a lap boundary. A plain shuffle can easily serve four of one category
  * back to back; this cannot, until only one category has questions left.
  */
-export function takeTurns<T>(items: T[], groupOf: (item: T) => string): T[] {
+function takeTurns<T>(items: T[], groupOf: (item: T) => string): T[] {
   const groups = new Map<string, T[]>();
   for (const item of shuffle(items)) {
     const key = groupOf(item);
@@ -639,7 +619,7 @@ export function settle(room: Room): boolean {
   return true;
 }
 
-export function teamResults(room: Room): TeamResult[] {
+function teamResults(room: Room): TeamResult[] {
   return Object.entries(room.decks).map(([team, deck]) => ({
     team,
     done: deck.done,

@@ -14,9 +14,9 @@
  * and the server (restoring from the copy kept in the repository).
  */
 
-export type CsvCategory = { name: string; items: string[] };
+type CsvCategory = { name: string; items: string[] };
 
-export type CsvParseResult = {
+type CsvParseResult = {
   categories: CsvCategory[];
   /** Rows that became questions. */
   rows: number;
