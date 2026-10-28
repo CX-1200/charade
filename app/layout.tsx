@@ -3,16 +3,14 @@ import './globals.css';
 import { ConfirmProvider } from '@/components/ConfirmDialog';
 
 export const metadata: Metadata = {
-  title: 'Charade Party',
-  description:
-    'Multiplayer charades in the browser: build your own question bank, split into teams, race the clock.',
+  title: 'Best Dress Vote',
+  description: 'Scan, vote once, and watch the Best Dress King and Queen results live.',
 };
 
 export const viewport: Viewport = {
-  themeColor: '#e0dace',
+  themeColor: '#f7f2ea',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

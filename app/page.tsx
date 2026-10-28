@@ -1,204 +1,223 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, post, roomAuth, session } from '@/lib/client';
-import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
+import { useConfirm } from '@/components/ConfirmDialog';
+import { TopBar } from '@/components/TopBar';
+import { useLiveState, type StateResponse } from '@/components/useLiveState';
+import { post, session, voterHeaders } from '@/lib/client';
 
-type CreateResponse = { code: string; playerId: string; secret: string };
-type JoinResponse = { playerId?: string; secret?: string };
+type PollView = StateResponse['polls'][number];
+type VoteResponse = StateResponse & { votedFor: string };
 
-export default function HomePage() {
-  const router = useRouter();
-  const [name, setName] = useState('');
+/** The phone screen a guest lands on after scanning the QR code. */
+export default function VotePage() {
+  const { state, setState, error, setError, refresh } = useLiveState(4000);
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
   const [code, setCode] = useState('');
-  const [busy, setBusy] = useState<'create' | 'join' | null>(null);
-  const [error, setError] = useState('');
+  const [hasTicket, setHasTicket] = useState(false);
 
-  const [admin, setAdmin] = useAdmin();
-  const [showUnlock, setShowUnlock] = useState(false);
-
-  const [storage, setStorage] = useState<{ durable: boolean } | null>(null);
-
+  // A personal pass opens this page as /?t=CODE: keep the code, then clean the
+  // URL so it does not linger in the address bar or get shared by accident.
   useEffect(() => {
-    setName(session.getName());
-    api<{ durable: boolean }>('/api/health')
-      .then(setStorage)
-      .catch(() => undefined);
-  }, []);
+    const url = new URL(window.location.href);
+    const fromLink = url.searchParams.get('t');
+    if (fromLink) {
+      session.setTicket(fromLink);
+      url.searchParams.delete('t');
+      window.history.replaceState(null, '', url.pathname + url.search);
+      void refresh();
+    }
+    setHasTicket(!!session.getTicket());
+  }, [refresh]);
 
-  function lock() {
-    session.clearAdminToken();
-    setAdmin(false);
+  // A stored code the server rejects is dropped, so it is not retried forever.
+  useEffect(() => {
+    if (state?.pass === 'invalid') {
+      session.clearTicket();
+      setHasTicket(false);
+      setError('That pass code is not valid — check it and try again');
+    }
+  }, [state?.pass, setError]);
+
+  async function applyPass() {
+    if (!code.trim()) return;
+    session.setTicket(code.trim());
+    setHasTicket(true);
+    setCode('');
+    await refresh();
   }
 
-  async function createRoom() {
-    setError('');
-    if (!name.trim()) return setError('Enter your name first');
-    setBusy('create');
+  async function vote(poll: PollView, nomineeId: string, name: string) {
+    const ok = await confirm({
+      icon: poll.id === 'king' ? '🤵' : '👗',
+      title: `Vote for ${name}?`,
+      message: `${poll.title}. You can only vote once, and it can’t be changed.`,
+      confirmLabel: 'Vote',
+      cancelLabel: 'Not yet',
+    });
+    if (!ok) return;
+    setBusy(true);
     try {
-      session.setName(name.trim());
-      const data = await post<CreateResponse>('/api/rooms', {
-        name: name.trim(),
-        adminToken: session.getAdminToken(),
-      });
-      session.setSeat(data.code, data);
-      router.push(`/room/${data.code}`);
+      const data = await post<VoteResponse>(
+        '/api/vote',
+        { poll: poll.id, nomineeId },
+        voterHeaders(),
+      );
+      setState({ ...data, pass: state?.pass ?? 'none', device: state?.device ?? '' });
+      setError('');
     } catch (e) {
       setError((e as Error).message);
-      setBusy(null);
+      void refresh();
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function joinRoom() {
-    setError('');
-    const target = code.trim().toUpperCase();
-    if (!name.trim()) return setError('Enter your name first');
-    if (target.length !== 4) return setError('A room code is 4 characters');
-    setBusy('join');
-    try {
-      session.setName(name.trim());
-      const data = await post<JoinResponse>(`/api/rooms/${target}`, {
-        action: 'join',
-        name: name.trim(),
-        ...roomAuth(target),
-      });
-      session.setSeat(target, data);
-      router.push(`/room/${target}`);
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(null);
-    }
+  if (!state) {
+    return (
+      <>
+        <TopBar />
+        <main className="page">
+          {error ? <div className="err">{error}</div> : <p className="muted">Loading…</p>}
+        </main>
+      </>
+    );
   }
+
+  const needsPass = state.mode === 'ticket' && state.pass !== 'valid';
+  // The single thing to act on: the first open vote this phone hasn't cast.
+  const focus = needsPass
+    ? null
+    : state.polls.find((p) => p.status === 'open' && !state.myVotes[p.id]);
 
   return (
-    <main className="shell">
-      <div className="topbar">
-        <div className="brand">
-          <span className="logo">🎭</span> Charade Party
-        </div>
-        {admin ? (
-          <button className="chip on" onClick={lock} title="Lock admin again">
-            🔓 Admin unlocked
-          </button>
-        ) : (
-          <button className="chip" onClick={() => setShowUnlock((v) => !v)}>
-            🔒 Admin
-          </button>
-        )}
-      </div>
-
-      {showUnlock && !admin && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3>Unlock admin</h3>
-          <p className="muted" style={{ margin: '0 0 12px' }}>
-            Admins create rooms, edit the question bank and control the round settings. Everyone
-            else just picks a name and joins.
-          </p>
-          <AdminUnlock
-            onUnlocked={() => {
-              setAdmin(true);
-              setShowUnlock(false);
-            }}
-          />
-        </div>
-      )}
-
-      {admin && (
-        <>
-          <Link href="/questions" className="cta">
-            <span className="cta-icon">📚</span>
-            <span className="cta-body">
-              <b>Question Bank</b>
-              <span>Create categories and write the questions every round draws from</span>
-            </span>
-            <span className="cta-arrow">→</span>
-          </Link>
-          <Link href="/rooms" className="cta">
-            <span className="cta-icon">🗂</span>
-            <span className="cta-body">
-              <b>Manage rooms</b>
-              <span>See every open room and close the ones you are done with</span>
-            </span>
-            <span className="cta-arrow">→</span>
-          </Link>
-        </>
-      )}
-
-      <div className="card">
-        <h1>Start a game, everybody guesses</h1>
-        <p className="sub">
-          Pick a name, gather in one room, split into teams, then race a timer the admin sets.
-          Scores land on the dashboard by team.
-        </p>
-
+    <>
+      <TopBar />
+      <main className="page">
+        <p className="eyebrow">Tonight</p>
+        <h1>{state.title}</h1>
+        <p className="status-line">{summary(state, needsPass)}</p>
         {error && <div className="err">{error}</div>}
-        {storage && !storage.durable && (
-          <div className="notice">
-            ⚠️ This deployment has no shared storage, so rooms live in one server instance only and
-            other players will get &ldquo;no such room&rdquo;.
-            <Link className="btn sm primary" href="/setup" style={{ marginTop: 10 }}>
-              Fix it in storage setup →
-            </Link>
-          </div>
-        )}
 
-        <label className="field">
-          <span>Your name</span>
-          <input
-            type="text"
-            value={name}
-            maxLength={20}
-            placeholder="e.g. Alex"
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-
-        <div className="grid-2">
-          <div>
-            <h3>Join a room</h3>
+        {needsPass && (
+          <section className="focus" style={{ marginTop: 28 }}>
+            <p className="eyebrow">Your voting pass</p>
+            <h2>Scan the QR on your pass</h2>
+            <p className="muted" style={{ margin: '8px 0 16px' }}>
+              Each guest has a personal pass. Scan its QR code, or type the code printed on it.
+            </p>
             <div className="row" style={{ flexWrap: 'nowrap' }}>
               <input
                 type="text"
                 value={code}
-                maxLength={4}
-                placeholder="CODE"
-                style={{
-                  textTransform: 'uppercase',
-                  letterSpacing: 4,
-                  fontWeight: 700,
-                }}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
+                placeholder="ABCD-2345"
+                autoCapitalize="characters"
+                autoComplete="off"
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && applyPass()}
+                style={{ color: 'var(--ink)' }}
               />
-              <button className="btn primary" onClick={joinRoom} disabled={busy !== null}>
-                {busy === 'join' ? '…' : 'Join'}
+              <button className="btn accent" onClick={applyPass} disabled={!code.trim()}>
+                Use pass
               </button>
             </div>
-            <p className="muted" style={{ marginTop: 8 }}>
-              Anyone with the 4-character code can play.
-            </p>
-          </div>
+            {hasTicket && <p className="muted">Checking your pass…</p>}
+          </section>
+        )}
 
-          <div>
-            <h3>Create a room</h3>
-            <button
-              className="btn block"
-              onClick={createRoom}
-              disabled={busy !== null || !admin}
-              title={admin ? undefined : 'Unlock admin first'}
-            >
-              {busy === 'create' ? 'Creating…' : '🎉 Create room'}
-            </button>
-            <p className="muted" style={{ marginTop: 8 }}>
-              {admin
-                ? 'You run the round and can watch instead of playing — the players make the teams.'
-                : 'Admins only — unlock admin at the top right.'}
-            </p>
-          </div>
+        <div style={{ display: 'grid', gap: 18, marginTop: 28 }}>
+          {state.polls.map((poll) => (
+            <PollCard
+              key={poll.id}
+              poll={poll}
+              myVote={state.myVotes[poll.id]}
+              focused={focus?.id === poll.id}
+              locked={needsPass}
+              busy={busy}
+              onVote={vote}
+            />
+          ))}
         </div>
-      </div>
-    </main>
+
+        <p className="muted" style={{ marginTop: 32, fontSize: 14 }}>
+          Results are on the big screen — or <Link href="/live">follow them live</Link>.
+        </p>
+      </main>
+    </>
+  );
+}
+
+function summary(state: StateResponse, needsPass: boolean): string {
+  if (needsPass) return 'Use your personal voting pass to vote.';
+  const open = state.polls.filter((p) => p.status === 'open');
+  const todo = open.filter((p) => !state.myVotes[p.id]);
+  if (todo.length) return `${todo.map((p) => p.title).join(' and ')} — voting is open.`;
+  if (open.length) return 'Thanks — your vote is in. Watch the results on the big screen.';
+  if (state.polls.every((p) => p.status === 'closed')) return 'Voting has closed. Thank you!';
+  return 'Voting opens soon — keep this page open.';
+}
+
+function PollCard({
+  poll,
+  myVote,
+  focused,
+  locked,
+  busy,
+  onVote,
+}: {
+  poll: PollView;
+  myVote: string | null;
+  focused: boolean;
+  locked: boolean;
+  busy: boolean;
+  onVote: (poll: PollView, nomineeId: string, name: string) => void;
+}) {
+  const chosen = myVote ? poll.nominees.find((n) => n.id === myVote) : null;
+  const canVote = poll.status === 'open' && !myVote && !locked;
+  const state = myVote
+    ? 'Your vote is in'
+    : poll.status === 'open'
+      ? focused
+        ? 'Now voting — tap your pick'
+        : 'Open'
+      : poll.status === 'closed'
+        ? 'Voting closed'
+        : 'Opens soon';
+
+  return (
+    <section className={focused ? 'focus' : 'quiet-card'}>
+      <p className="eyebrow">{state}</p>
+      <h2>{poll.title}</h2>
+      {chosen && (
+        <div className="voted">
+          <span className="tick" aria-hidden="true">
+            ✓
+          </span>
+          <span>
+            You voted for <b>{chosen.name}</b>
+          </span>
+        </div>
+      )}
+      {canVote && (
+        <div className="nominees">
+          {poll.nominees.map((n) => (
+            <button
+              key={n.id}
+              className="nominee"
+              disabled={busy}
+              onClick={() => onVote(poll, n.id, n.name)}
+            >
+              <span>
+                <span className="name">{n.name}</span>
+                {n.note && <span className="sub">{n.note}</span>}
+              </span>
+              <span className="go">Vote</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

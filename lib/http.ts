@@ -3,7 +3,7 @@ import { HttpError } from './errors';
 
 /**
  * The one error response every API route sends. Expected failures (HttpError)
- * keep their message — "Room not found", "Wrong password". Anything else is a
+ * keep their message — "Voting has closed", "Wrong password". Anything else is a
  * bug or an outage: it is logged here and the client gets a generic message,
  * because raw errors can carry database URLs, SQL or file paths.
  */

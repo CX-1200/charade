@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
  * Called once a day by Vercel Cron (see vercel.json).
  *
  * Free-tier databases are archived when nobody touches them — Turso after 10
- * days, Upstash after 30 — and a party game can easily sit unused that long.
+ * days, Upstash after 30 — and a voting app can easily sit unused that long between events.
  * One real read and write a day keeps the database counted as active, so it is
  * awake the next time you want to play.
  *

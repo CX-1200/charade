@@ -3,12 +3,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 /**
- * Charade's own confirmation dialog, in place of the browser's `confirm()`:
+ * The app's own confirmation dialog, in place of the browser's `confirm()`:
  * it matches the app, works the same in every browser, and is not suppressed
  * the way native dialogs can be inside in-app browsers or after repeated use.
  *
  *   const confirm = useConfirm();
- *   if (await confirm({ title: 'Leave Reds?', confirmLabel: 'Leave team' })) …
+ *   if (await confirm({ title: 'Vote for Alex?', confirmLabel: 'Vote' })) …
  */
 type ConfirmOptions = {
   title: string;
@@ -81,7 +81,7 @@ function Dialog({ options, onClose }: { options: ConfirmOptions; onClose: (ok: b
     };
   }, [onClose]);
 
-  const icon = options.icon ?? (options.danger ? '⚠️' : '🎭');
+  const icon = options.icon ?? (options.danger ? '⚠️' : '✨');
   return (
     <div
       className="dialog-backdrop"

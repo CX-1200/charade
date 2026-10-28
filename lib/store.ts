@@ -9,7 +9,7 @@ import type { Client } from '@libsql/client';
  *               shared by every serverless instance, and a free tier large
  *               enough that this app will not exhaust it. The recommended one.
  *  - `redis`  : Upstash / Vercel KV REST credentials are present. Also durable
- *               and shared, but the free tier is tight for busy game nights.
+ *               and shared, but the free tier is tight for busy events.
  *  - `file`   : a writable disk (local dev, Docker, any long-lived Node host).
  *               State survives restarts on a single server.
  *  - `memory` : last resort. Lives in the process only: lost on restart, not
@@ -96,7 +96,7 @@ async function acquireOrThrow(tryAcquire: () => Promise<boolean>): Promise<void>
   const deadline = Date.now() + LOCK_MAX_WAIT_MS;
   while (!(await tryAcquire())) {
     if (Date.now() > deadline) {
-      throw new Error('Timed out waiting for the room lock — please try again');
+      throw new Error('Timed out waiting for the lock — please try again');
     }
     await sleep(LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS));
   }
@@ -297,12 +297,12 @@ function redisDriver(): Driver {
 
 /* ------------------------------------------------ file and memory drivers */
 
-const DATA_DIR = process.env.CHARADE_DATA_DIR || join(process.cwd(), '.data');
-const DATA_FILE = join(DATA_DIR, 'charade.json');
+const DATA_DIR = process.env.VOTE_DATA_DIR || join(process.cwd(), '.data');
+const DATA_FILE = join(DATA_DIR, 'vote.json');
 
 /** True when this process can actually keep a file around between requests. */
 function probeWritableDisk(): boolean {
-  if (process.env.CHARADE_DISABLE_FILE_STORE === '1') return false;
+  if (process.env.VOTE_DISABLE_FILE_STORE === '1') return false;
   try {
     mkdirSync(DATA_DIR, { recursive: true });
     const probe = join(DATA_DIR, '.probe');
@@ -380,12 +380,12 @@ function fileDriver(): Driver {
 }
 
 const globalForStore = globalThis as unknown as {
-  __charadeMemory?: Record<string, Entry>;
-  __charadeLocks?: Map<string, Promise<unknown>>;
+  __voteMemory?: Record<string, Entry>;
+  __voteLocks?: Map<string, Promise<unknown>>;
 };
 
 function memoryDriver(): Driver {
-  const data = (globalForStore.__charadeMemory ??= {});
+  const data = (globalForStore.__voteMemory ??= {});
   return bucketDriver(
     () => data,
     () => {},
@@ -448,13 +448,13 @@ export const kvSetAdd = (key: string, member: string) => driver.setAdd(key, memb
 export const kvSetRemove = (key: string, member: string) => driver.setRemove(key, member);
 export const kvSetMembers = (key: string) => driver.setMembers(key);
 
-const locks: Map<string, Promise<unknown>> = (globalForStore.__charadeLocks ??= new Map());
+const locks: Map<string, Promise<unknown>> = (globalForStore.__voteLocks ??= new Map());
 
 /**
  * Serialises read-modify-write cycles on one key. Requests inside this process
  * queue on an in-memory chain; shared drivers then also take a cross-instance
  * lock, because on serverless there are many processes and two simultaneous
- * answers could otherwise read the same room and write back over each other.
+ * votes could otherwise read the same state and write back over each other.
  */
 export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const body = driver.lock ? () => driver.lock!(key, fn) : fn;
@@ -477,10 +477,10 @@ export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T>
 /**
  * Real round-trip against the active store. `/api/health` and the setup page
  * use it so a misconfigured store shows up as a clear failure rather than as
- * mysterious 500s during a game.
+ * mysterious 500s during the vote.
  */
 export async function storePing(): Promise<{ ok: boolean; error?: string }> {
-  const key = 'charade:__ping';
+  const key = 'vote:__ping';
   try {
     await kvSet(key, { at: Date.now() }, 60);
     const back = await kvGet<{ at: number }>(key);

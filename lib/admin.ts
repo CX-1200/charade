@@ -12,8 +12,8 @@ import { HttpError } from './errors';
  * convenience default.
  */
 const PASSWORD =
-  process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? null : 'charade');
-const SECRET = process.env.ADMIN_SECRET || `charade-admin:${PASSWORD ?? ''}`;
+  process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? null : 'bestdress');
+const SECRET = process.env.ADMIN_SECRET || `best-dress-vote-admin:${PASSWORD ?? ''}`;
 
 export const adminConfigured = PASSWORD !== null;
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 12;
