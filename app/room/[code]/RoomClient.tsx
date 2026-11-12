@@ -1483,6 +1483,7 @@ function RaceResults({ view }: { view: RoomView }) {
   if (!race.teams.length) return null;
   const medals = ['🥇', '🥈', '🥉'];
   const roundLength = race.startedAt && race.endedAt ? race.endedAt - race.startedAt : 0;
+  const winners = winnersOf(view);
   return (
     <div className="card">
       <div className="spread" style={{ marginBottom: 12 }}>
@@ -1495,8 +1496,14 @@ function RaceResults({ view }: { view: RoomView }) {
         {race.teams.map((t, index) => {
           const row = scores.round.find((s) => s.team === t.team);
           return (
-            <div key={t.team} className={`result-row${t.place === 1 ? ' first' : ''}`}>
-              <div className="rank">{t.place ? (medals[t.place - 1] ?? t.place) : index + 1}</div>
+            <div key={t.team} className={`result-row${winners.includes(t.team) ? ' first' : ''}`}>
+              <div className="rank">
+                {winners.includes(t.team)
+                  ? '🏆'
+                  : t.place
+                    ? (medals[t.place - 1] ?? t.place)
+                    : index + 1}
+              </div>
               <div>
                 <div className="team-name" style={{ fontWeight: 700 }}>
                   {t.team}
@@ -1522,6 +1529,88 @@ function RaceResults({ view }: { view: RoomView }) {
   );
 }
 
+/**
+ * The end of the game, in one glance: the winning team in a big accent card
+ * with confetti. The winner is the first team to finish every question; if
+ * nobody finished, the team with the most points (several, on a tie).
+ */
+function WinnerHero({ view }: { view: RoomView }) {
+  const { scores, race } = view;
+  const first = race.teams.find((t) => t.team === race.winner);
+  const everyoneDone = race.teams.length > 0 && race.teams.every((t) => t.finishedAt);
+  const top = scores.round[0]?.score ?? 0;
+  const winners = winnersOf(view);
+  const mine = view.you?.team ? winners.includes(view.you.team) : false;
+
+  if (!winners.length) {
+    return (
+      <div className="card">
+        <h1>🏁 Time’s up</h1>
+        <p className="sub">Nobody scored this round.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="winner-hero">
+      <Confetti />
+      <div className="trophy" aria-hidden="true">
+        🏆
+      </div>
+      <p className="winner-label">
+        {winners.length > 1 ? 'It’s a tie' : mine ? 'Your team wins!' : 'Winner'}
+      </p>
+      <h1 className="winner-name">{winners.join(' & ')}</h1>
+      <p className="winner-sub">
+        {first
+          ? `First to answer all ${first.total} questions, in ${formatElapsed(first.elapsedMs)}.${everyoneDone ? ' Every team finished.' : ''}`
+          : `Nobody finished every question — ${winners.length > 1 ? 'they got' : 'got'} furthest with ${top} ${top === 1 ? 'point' : 'points'}.`}
+      </p>
+    </div>
+  );
+}
+
+/** The first team to finish every question; otherwise the top scorers (a tie gives several). */
+function winnersOf(view: RoomView): string[] {
+  const { scores, race } = view;
+  if (race.winner) return [race.winner];
+  const top = scores.round[0]?.score ?? 0;
+  return top > 0 ? scores.round.filter((s) => s.score === top).map((s) => s.team) : [];
+}
+
+const CONFETTI_COLOURS = ['#de2c00', '#e0dace', '#241d17', '#f7f4ee', '#ff8a5c'];
+
+function Confetti() {
+  const [pieces] = useState(() =>
+    Array.from({ length: 60 }, (_, i) => ({
+      left: Math.random() * 100,
+      drift: (Math.random() - 0.5) * 200,
+      spin: (Math.random() - 0.5) * 900,
+      wait: Math.random() * 0.8,
+      fall: 2.4 + Math.random() * 2,
+      color: CONFETTI_COLOURS[i % CONFETTI_COLOURS.length],
+    })),
+  );
+  return (
+    <div className="confetti" aria-hidden="true">
+      {pieces.map((p, i) => (
+        <i
+          key={i}
+          style={
+            {
+              left: `${p.left}%`,
+              background: p.color,
+              animationDelay: `${p.wait}s`,
+              animationDuration: `${p.fall}s`,
+              '--drift': `${p.drift}px`,
+              '--spin': `${p.spin}deg`,
+            } as React.CSSProperties
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 function Dashboard({
   view,
   admin,
@@ -1535,21 +1624,10 @@ function Dashboard({
 }) {
   const { room, scores, log, race } = view;
   const [tab, setTab] = useState<'round' | 'total'>('round');
-  const leader = scores.round[0];
-  const first = race.teams.find((t) => t.team === race.winner);
-  const everyoneDone = race.teams.length > 0 && race.teams.every((t) => t.finishedAt);
-
   return (
     <>
+      <WinnerHero view={view} />
       <div className="card">
-        <h1>{first ? `🏆 ${first.team} wins!` : '🏁 Time’s up'}</h1>
-        <p className="sub">
-          {first
-            ? `First to answer all ${first.total} questions, in ${formatElapsed(first.elapsedMs)}.${everyoneDone ? ' Every team finished.' : ''}`
-            : leader && leader.score > 0
-              ? `Nobody finished every question. ${leader.team} got furthest with ${leader.score} ${leader.score === 1 ? 'point' : 'points'}.`
-              : 'Nobody scored this round.'}
-        </p>
         {admin ? (
           <div className="row">
             <button
