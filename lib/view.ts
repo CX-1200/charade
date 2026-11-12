@@ -9,7 +9,7 @@ export function publicView(election: Election, voterKey: string | null) {
     now: Date.now(),
     title: election.title,
     mode: election.mode,
-    display: election.display ?? 'auto',
+    stage: election.stage ?? 'welcome',
     polls: POLL_IDS.map((id) => {
       const poll = election.polls[id];
       return {

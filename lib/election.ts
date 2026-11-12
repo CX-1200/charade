@@ -1,7 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { HttpError } from './errors';
 import { kvGet, kvSet, withLock } from './store';
-import { POLL_IDS, type Election, type Nominee, type Poll, type PollId } from './types';
+import {
+  POLL_IDS,
+  STAGES,
+  type Election,
+  type Nominee,
+  type Poll,
+  type PollId,
+  type Stage,
+} from './types';
 
 const KEY = 'vote:election';
 
@@ -28,7 +36,7 @@ function freshElection(): Election {
   return {
     title: 'Best Dress Awards',
     mode: 'device',
-    display: 'auto',
+    stage: 'welcome',
     polls: { king: newPoll('king'), queen: newPoll('queen') },
     tickets: {},
     updatedAt: Date.now(),
@@ -165,28 +173,84 @@ export function resetVotes(election: Election, pollId: PollId): void {
   poll.tally = {};
 }
 
-/** Empties a poll's nominee list (and with it every vote), back to "not open yet". */
-export function clearNominees(election: Election, pollId: PollId): number {
+/** A poll's votes are deleted and it goes back to "not open yet". The list stays. */
+export function resetPoll(election: Election, pollId: PollId): void {
   const poll = election.polls[pollId];
-  const removed = poll.nominees.length;
   resetVotes(election, pollId);
-  poll.nominees = [];
   poll.status = 'draft';
   poll.openedAt = null;
   poll.closedAt = null;
+  rewindStage(election, pollId);
+}
+
+/** Empties a poll's nominee list (and with it every vote). */
+export function clearNominees(election: Election, pollId: PollId): number {
+  const removed = election.polls[pollId].nominees.length;
+  resetPoll(election, pollId);
+  election.polls[pollId].nominees = [];
   return removed;
 }
 
-/** Deletes every vote in both polls and puts both back to "not open yet". Lists stay. */
-export function resetAllVoting(election: Election): void {
-  for (const id of POLL_IDS) {
-    const poll = election.polls[id];
-    resetVotes(election, id);
-    poll.status = 'draft';
-    poll.openedAt = null;
+/**
+ * If the show is on (or past) a poll that was just reset, step back to just
+ * before that poll, so the Live screen never shows a result that is gone.
+ */
+function rewindStage(election: Election, pollId: PollId): void {
+  const stage = election.stage ?? 'welcome';
+  const affected =
+    stage === 'finale' || stage === `${pollId}-voting` || stage === `${pollId}-result`;
+  if (!affected) return;
+  election.stage =
+    pollId === 'queen' && election.polls.king.status === 'closed' ? 'king-result' : 'welcome';
+}
+
+export function isStage(value: unknown): value is Stage {
+  return typeof value === 'string' && (STAGES as readonly string[]).includes(value);
+}
+
+/**
+ * Moves the show to a stage, opening or closing the vote it belongs to. Any
+ * step can be revisited (to fix a mistake), but each needs what comes before it.
+ */
+export function goToStage(election: Election, stage: Stage): void {
+  const { king, queen } = election.polls;
+  const open = (poll: Poll) => {
+    if (!poll.nominees.length) {
+      throw new HttpError(400, `Add the nominees for ${poll.title} first`);
+    }
+    poll.status = 'open';
+    poll.openedAt ??= Date.now();
     poll.closedAt = null;
+  };
+  const close = (poll: Poll) => {
+    if (poll.status === 'draft') throw new HttpError(409, `${poll.title} has not been opened yet`);
+    if (poll.status === 'open') {
+      poll.status = 'closed';
+      poll.closedAt = Date.now();
+    }
+  };
+  switch (stage) {
+    case 'welcome':
+      break;
+    case 'king-voting':
+      open(king);
+      break;
+    case 'king-result':
+      close(king);
+      break;
+    case 'queen-voting':
+      open(queen);
+      break;
+    case 'queen-result':
+      close(queen);
+      break;
+    case 'finale':
+      if (king.status !== 'closed' || queen.status !== 'closed') {
+        throw new HttpError(409, 'Close both King and Queen voting first');
+      }
+      break;
   }
-  election.display = 'auto';
+  election.stage = stage;
 }
 
 function releaseTicket(election: Election, voterKey: string, pollId: PollId): void {

@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { Client } from '@libsql/client';
 
@@ -53,19 +60,20 @@ const TURSO_READY = !!tursoUrl.value && (tursoUrl.value.startsWith('file:') || !
 const REDIS_READY = !!redisUrl.value && !!redisToken.value;
 
 /** Which env var names were actually found — reported by /api/health. Never values. */
-export const detectedVars = TURSO_READY || (tursoUrl.value && !REDIS_READY)
-  ? {
-      provider: 'turso' as const,
-      url: tursoUrl.name || null,
-      token: tursoToken.name || null,
-      looksLikeRedisUrl: false,
-    }
-  : {
-      provider: redisUrl.value ? ('redis' as const) : null,
-      url: redisUrl.name || null,
-      token: redisToken.name || null,
-      looksLikeRedisUrl: /^rediss?:\/\//i.test(redisUrl.value),
-    };
+export const detectedVars =
+  TURSO_READY || (tursoUrl.value && !REDIS_READY)
+    ? {
+        provider: 'turso' as const,
+        url: tursoUrl.name || null,
+        token: tursoToken.name || null,
+        looksLikeRedisUrl: false,
+      }
+    : {
+        provider: redisUrl.value ? ('redis' as const) : null,
+        url: redisUrl.name || null,
+        token: redisToken.name || null,
+        looksLikeRedisUrl: /^rediss?:\/\//i.test(redisUrl.value),
+      };
 
 /* -------------------------------------------------------------- interface */
 
@@ -170,7 +178,9 @@ function tursoDriver(): Driver {
 
   return {
     async get(key) {
-      const rs = await (await db()).execute({
+      const rs = await (
+        await db()
+      ).execute({
         sql: 'SELECT value, expires_at FROM kv WHERE key = ?',
         args: [key],
       });
@@ -180,7 +190,9 @@ function tursoDriver(): Driver {
       return expiresAt && expiresAt < Date.now() ? null : (row.value as string);
     },
     async set(key, value, ttlSeconds) {
-      await (await db()).execute({
+      await (
+        await db()
+      ).execute({
         sql: `INSERT INTO kv (key, value, expires_at) VALUES (?, ?, ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at`,
         args: [key, value, ttlSeconds ? Date.now() + ttlSeconds * 1000 : null],
@@ -190,19 +202,25 @@ function tursoDriver(): Driver {
       await (await db()).execute({ sql: 'DELETE FROM kv WHERE key = ?', args: [key] });
     },
     async setAdd(key, member) {
-      await (await db()).execute({
+      await (
+        await db()
+      ).execute({
         sql: 'INSERT INTO kv_set (key, member) VALUES (?, ?) ON CONFLICT DO NOTHING',
         args: [key, member],
       });
     },
     async setRemove(key, member) {
-      await (await db()).execute({
+      await (
+        await db()
+      ).execute({
         sql: 'DELETE FROM kv_set WHERE key = ? AND member = ?',
         args: [key, member],
       });
     },
     async setMembers(key) {
-      const rs = await (await db()).execute({
+      const rs = await (
+        await db()
+      ).execute({
         sql: 'SELECT member FROM kv_set WHERE key = ?',
         args: [key],
       });
@@ -282,8 +300,8 @@ function redisDriver(): Driver {
     async lock(key, fn) {
       const lockKey = `${key}:lock`;
       const token = lockToken();
-      await acquireOrThrow(async () =>
-        !!(await command(['SET', lockKey, token, 'NX', 'PX', LOCK_TTL_MS])),
+      await acquireOrThrow(
+        async () => !!(await command(['SET', lockKey, token, 'NX', 'PX', LOCK_TTL_MS])),
       );
       try {
         return await fn();
@@ -321,7 +339,10 @@ function probeWritableDisk(): boolean {
  * a read-modify-write cannot interleave on Node's single thread, and it writes
  * through a rename so a crash cannot truncate the file.
  */
-function bucketDriver(load: () => Record<string, Entry>, save: (d: Record<string, Entry>) => void): Driver {
+function bucketDriver(
+  load: () => Record<string, Entry>,
+  save: (d: Record<string, Entry>) => void,
+): Driver {
   const live = (entry?: Entry) =>
     !entry || (entry.expiresAt && entry.expiresAt < Date.now()) ? null : entry;
   const readSet = (data: Record<string, Entry>, key: string): string[] => {
@@ -353,7 +374,11 @@ function bucketDriver(load: () => Record<string, Entry>, save: (d: Record<string
     },
     setRemove: async (key, member) => {
       const data = load();
-      writeSet(data, key, readSet(data, key).filter((m) => m !== member));
+      writeSet(
+        data,
+        key,
+        readSet(data, key).filter((m) => m !== member),
+      );
       save(data);
     },
     setMembers: async (key) => readSet(load(), key),
@@ -495,7 +520,10 @@ export async function storePing(): Promise<{ ok: boolean; error?: string }> {
       return { ok: false, error: 'Rejected by the store: the token is wrong or expired' };
     }
     if (/archiv|blocked|suspend/i.test(message)) {
-      return { ok: false, error: 'The database is archived or paused — unarchive it in its dashboard' };
+      return {
+        ok: false,
+        error: 'The database is archived or paused — unarchive it in its dashboard',
+      };
     }
     if (status) return { ok: false, error: `Store responded with HTTP ${status}` };
     return { ok: false, error: 'Could not reach the store — check the URL' };

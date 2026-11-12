@@ -7,7 +7,7 @@ import { useAdmin } from '@/components/AdminUnlock';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { TopBar } from '@/components/TopBar';
 import { adminHeaders, api, post, session } from '@/lib/client';
-import type { LiveDisplay, PollId, VoteMode } from '@/lib/types';
+import { STAGES, type PollId, type Stage, type VoteMode } from '@/lib/types';
 import type { AdminView } from '@/lib/view';
 
 type Response = AdminView & { message?: string | null };
@@ -102,14 +102,13 @@ export default function ManagePage() {
               />
             </div>
 
-            <DisplaySection view={view} busy={busy} act={act} />
+            <ShowSection view={view} busy={busy} act={act} />
 
             {view.polls.map((poll) => (
               <PollSection key={poll.id} poll={poll} busy={busy} act={act} />
             ))}
 
             <RulesSection view={view} busy={busy} act={act} />
-            <ResetAllSection view={view} busy={busy} act={act} />
           </>
         )}
       </main>
@@ -129,9 +128,8 @@ function nextStep(view: AdminView): string {
       .map((p) => `${p.title} is live — ${p.total} ${p.total === 1 ? 'vote' : 'votes'}`)
       .join(' · ');
   }
-  const draft = view.polls.find((p) => p.status === 'draft');
-  if (draft) return `Ready. Open ${draft.title} when you want voting to start.`;
-  return 'All voting is closed. The winners are on the live dashboard.';
+  if (view.stage === 'finale') return 'The show is complete — both winners are on the Live screen.';
+  return 'Ready. Use the show steps below to move the Live screen on.';
 }
 
 type Act = (body: Record<string, unknown>) => Promise<boolean>;
@@ -205,7 +203,7 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
     const ok = await confirm({
       danger: true,
       title: `Reset ${poll.title}?`,
-      message: `All ${poll.total} ${poll.total === 1 ? 'vote is' : 'votes are'} deleted and everyone can vote again. This cannot be undone.`,
+      message: `All ${poll.total} ${poll.total === 1 ? 'vote is' : 'votes are'} deleted, ${poll.title} goes back to "not open yet", and everyone can vote again. The nominee list stays. This cannot be undone.`,
       confirmLabel: 'Reset votes',
     });
     if (ok) await act({ action: 'resetVotes', poll: pollId });
@@ -253,18 +251,25 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
         </div>
         <div className="row">
           {poll.status === 'open' ? (
-            <button className="btn primary" disabled={busy} onClick={() => setStatus('closed')}>
+            <button className="btn" disabled={busy} onClick={() => setStatus('closed')}>
               Close voting
             </button>
           ) : (
             <button
-              className="btn accent"
+              className="btn"
               disabled={busy || !poll.nominees.length}
               onClick={() => setStatus('open')}
             >
               {poll.status === 'closed' ? 'Reopen voting' : 'Open voting'}
             </button>
           )}
+          <button
+            className="btn"
+            disabled={busy || (!poll.total && poll.status === 'draft')}
+            onClick={reset}
+          >
+            Reset votes
+          </button>
           <TitleEditor
             label="Rename"
             value={poll.title}
@@ -306,7 +311,7 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
           onChange={(e) => setText(e.target.value)}
         />
       </label>
-      <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>
+      <div className="row" style={{ marginTop: 10 }}>
         <button
           className="btn primary"
           disabled={busy || !text.trim()}
@@ -315,9 +320,6 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
           }
         >
           Add to list
-        </button>
-        <button className="btn link" disabled={busy || !poll.total} onClick={reset}>
-          Reset votes
         </button>
       </div>
     </section>
@@ -505,62 +507,91 @@ function RulesSection({ view, busy, act }: { view: AdminView; busy: boolean; act
   );
 }
 
-const DISPLAYS: Array<{ id: LiveDisplay; label: string }> = [
-  { id: 'auto', label: 'Follow the vote' },
-  { id: 'king', label: 'King' },
-  { id: 'queen', label: 'Queen' },
-  { id: 'both', label: 'King & Queen' },
-];
+type Step = { stage: Stage; title: string; action: string; confirm?: string };
 
-/** Drives what the big screen shows, from the admin's phone. */
-function DisplaySection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
-  return (
-    <section className="section" style={{ marginTop: 18 }}>
-      <h2>Live screen</h2>
-      <p className="muted" style={{ margin: '6px 0 14px' }}>
-        What every open Live dashboard shows. &ldquo;Follow the vote&rdquo; shows whichever vote is
-        open; finish with King &amp; Queen to reveal both winners together.
-      </p>
-      <div className="segmented" role="radiogroup" aria-label="Live screen shows">
-        {DISPLAYS.map((d) => (
-          <button
-            key={d.id}
-            role="radio"
-            aria-checked={view.display === d.id}
-            className={view.display === d.id ? 'on' : undefined}
-            disabled={busy}
-            onClick={() => act({ action: 'setDisplay', display: d.id })}
-          >
-            {d.label}
-          </button>
-        ))}
-      </div>
-    </section>
-  );
+function stepsFor(view: AdminView): Step[] {
+  const [king, queen] = view.polls;
+  return [
+    { stage: 'welcome', title: 'Welcome screen', action: 'Show the welcome screen' },
+    { stage: 'king-voting', title: `${king.title} — voting`, action: 'Open King voting' },
+    {
+      stage: 'king-result',
+      title: `${king.title} — result`,
+      action: 'Close voting & show King result',
+      confirm: `Close ${king.title}? No more votes are accepted, and the Live screen reveals the result.`,
+    },
+    { stage: 'queen-voting', title: `${queen.title} — voting`, action: 'Open Queen voting' },
+    {
+      stage: 'queen-result',
+      title: `${queen.title} — result`,
+      action: 'Close voting & show Queen result',
+      confirm: `Close ${queen.title}? No more votes are accepted, and the Live screen reveals the result.`,
+    },
+    {
+      stage: 'finale',
+      title: 'Best Dress — King & Queen',
+      action: 'Reveal Best Dress King & Queen',
+    },
+  ];
 }
 
-function ResetAllSection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
+/** The show, as a fixed run of steps: one button moves the Live screen on. */
+function ShowSection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
   const confirm = useConfirm();
-  const total = view.polls.reduce((sum, p) => sum + p.total, 0);
-  const touched = view.polls.some((p) => p.status !== 'draft');
-  const reset = async () => {
-    const ok = await confirm({
-      danger: true,
-      title: 'Reset all voting?',
-      message: `All ${total} ${total === 1 ? 'vote' : 'votes'} for King and Queen are deleted, both votes go back to "not open yet", and everyone can vote again. The nominee lists stay. This cannot be undone.`,
-      confirmLabel: 'Reset all voting',
-    });
-    if (ok) await act({ action: 'resetAll' });
+  const steps = stepsFor(view);
+  const at = STAGES.indexOf(view.stage);
+  const next = steps[at + 1];
+  const back = steps[at - 1];
+
+  const go = async (step: Step, backwards: boolean) => {
+    let ok = true;
+    if (!backwards && step.confirm) {
+      ok = await confirm({
+        title: step.action + '?',
+        message: step.confirm,
+        confirmLabel: 'Yes, go',
+      });
+    } else if (backwards && step.stage.endsWith('-voting')) {
+      ok = await confirm({
+        title: 'Go back and reopen voting?',
+        message: 'The Live screen goes back to the voting screen and votes are accepted again.',
+        confirmLabel: 'Reopen voting',
+      });
+    }
+    if (ok) await act({ action: 'setStage', stage: step.stage });
   };
+
   return (
-    <section className="section danger-zone" style={{ marginTop: 18 }}>
-      <h2>Reset voting</h2>
-      <p className="muted" style={{ margin: '6px 0 14px' }}>
-        Start over with the same nominees: clears every vote in both King and Queen.
+    <section className="section" style={{ marginTop: 18 }}>
+      <h2>The show</h2>
+      <p className="muted" style={{ margin: '6px 0 16px' }}>
+        The Live screen follows these steps. Press the button for the next one.
       </p>
-      <button className="btn danger-solid" disabled={busy || (!total && !touched)} onClick={reset}>
-        Reset all voting
-      </button>
+      <ol className="steps">
+        {steps.map((step, i) => (
+          <li key={step.stage} className={i < at ? 'done' : i === at ? 'now' : undefined}>
+            <span className="dot" aria-hidden="true">
+              {i < at ? '✓' : i + 1}
+            </span>
+            <span>
+              {step.title}
+              {i === at && <em> — on screen now</em>}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div className="row" style={{ marginTop: 16 }}>
+        {next ? (
+          <button className="btn accent big" disabled={busy} onClick={() => go(next, false)}>
+            {next.action} →
+          </button>
+        ) : null}
+        {back && (
+          <button className="btn ghost" disabled={busy} onClick={() => go(back, true)}>
+            ← Back
+          </button>
+        )}
+      </div>
     </section>
   );
 }

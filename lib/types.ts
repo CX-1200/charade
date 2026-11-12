@@ -39,13 +39,25 @@ export type Ticket = {
   used: Partial<Record<PollId, number>>;
 };
 
-/** What the live dashboard shows: one vote at a time, or both winners together. */
-export type LiveDisplay = 'auto' | PollId | 'both';
+/**
+ * The show, in its fixed order. The admin steps through it in Manage and the
+ * Live screen follows: King votes, King's result, Queen votes, Queen's
+ * result, then the Best Dress finale with both winners.
+ */
+export const STAGES = [
+  'welcome',
+  'king-voting',
+  'king-result',
+  'queen-voting',
+  'queen-result',
+  'finale',
+] as const;
+export type Stage = (typeof STAGES)[number];
 
 export type Election = {
   title: string;
-  /** Older stored elections have no value here; read it as 'auto'. */
-  display?: LiveDisplay;
+  /** Older stored elections have no value here; read it as 'welcome'. */
+  stage?: Stage;
   mode: VoteMode;
   polls: Record<PollId, Poll>;
   tickets: Record<string, Ticket>;

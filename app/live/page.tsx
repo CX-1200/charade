@@ -1,211 +1,323 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Qr } from '@/components/Qr';
 import { TopBar } from '@/components/TopBar';
 import { useLiveState, type StateResponse } from '@/components/useLiveState';
+import type { PollId, Stage } from '@/lib/types';
 
 type PollView = StateResponse['polls'][number];
 
-type View = 'king' | 'queen' | 'both';
-const VIEWS: Array<{ id: View; label: string }> = [
-  { id: 'king', label: 'King' },
-  { id: 'queen', label: 'Queen' },
-  { id: 'both', label: 'King & Queen' },
-];
-
 /**
- * The big-screen dashboard. It shows one vote at a time — King, then Queen —
- * and finally King & Queen together for the reveal. The admin drives which
- * from Manage; anyone at a screen can also tap the view row to look at another,
- * until the admin changes it again.
+ * The big screen. It has no controls of its own: the admin steps through the
+ * show in Manage and this follows — King votes, King's result, Queen votes,
+ * Queen's result, then the Best Dress finale. Every change eases in (scenes
+ * cross-fade, bars glide, rows slide into their new order, numbers count up),
+ * so the room sees a show rather than a page reloading.
  */
 export default function LivePage() {
   const { state, error } = useLiveState(2000);
   const [origin, setOrigin] = useState('');
   useEffect(() => setOrigin(window.location.origin), []);
-
-  const driven = useMemo<View | undefined>(() => (state ? viewFor(state) : undefined), [state]);
-  const [picked, setPicked] = useState<View | null>(null);
-  // A new choice from the admin wins over a local tap.
-  const serverDisplay = state?.display;
-  useEffect(() => setPicked(null), [serverDisplay]);
-  const view = picked ?? driven ?? 'king';
-
-  const qr = state && (
-    <aside className="qr-panel">
-      {origin && <Qr value={`${origin}/`} size={280} label="QR code to open the voting page" />}
-      <p className="cta">{state.mode === 'ticket' ? 'Scan the QR on your pass' : 'Scan to vote'}</p>
-      <p className="url">{origin.replace(/^https?:\/\//, '')}</p>
-      <p className="muted" style={{ fontSize: 13 }}>
-        {state.mode === 'ticket' ? 'One vote per personal voting pass.' : 'One vote per phone.'}
-      </p>
-    </aside>
-  );
+  const { shown, leaving } = useSceneTransition(state?.stage);
 
   return (
     <>
       <TopBar actions={<FullscreenButton />} />
-      <main className="page wide">
-        {!state ? (
+      <main className="page wide live">
+        {!state || !shown ? (
           error ? (
             <div className="err">{error}</div>
           ) : (
             <p className="muted">Loading…</p>
           )
         ) : (
-          <>
-            <div className="live-head">
-              <div>
-                <h1>{state.title}</h1>
-                <p className="status-line">{statusLine(state.polls)}</p>
-              </div>
-              <nav className="view-tabs" aria-label="Show">
-                {VIEWS.map((v) => (
-                  <button
-                    key={v.id}
-                    className={view === v.id ? 'on' : undefined}
-                    aria-pressed={view === v.id}
-                    onClick={() => setPicked(v.id)}
-                  >
-                    {v.label}
-                  </button>
-                ))}
-              </nav>
-            </div>
-            {error && <div className="err">{error}</div>}
-            <hr className="rule" />
-            {view === 'both' ? (
-              <BothView
-                polls={state.polls}
-                qr={state.polls.some((p) => p.status === 'open') && qr}
-              />
-            ) : (
-              <div className="board">
-                {qr}
-                <div className="charts">
-                  <PollChart poll={state.polls.find((p) => p.id === view)!} focused />
-                </div>
-              </div>
-            )}
-          </>
+          <div className={`scene${leaving ? ' out' : ''}`} key={shown}>
+            <Scene stage={shown} state={state} origin={origin} />
+          </div>
         )}
       </main>
     </>
   );
 }
 
-/** What the admin asked for; "auto" follows the open vote, and both once both are closed. */
-function viewFor(state: StateResponse): View {
-  if (state.display !== 'auto') return state.display;
-  const open = state.polls.filter((p) => p.status === 'open');
-  if (open.length === 1) return open[0].id;
-  if (open.length > 1) return 'both';
-  if (state.polls.every((p) => p.status === 'closed')) return 'both';
-  const closed = state.polls
-    .filter((p) => p.status === 'closed')
-    .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
-  return closed[0]?.id ?? 'king';
+/** Holds the old scene for a moment while it fades out, then swaps in the new one. */
+function useSceneTransition(stage: Stage | undefined) {
+  const [shown, setShown] = useState<Stage | undefined>(stage);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (!stage || stage === shown) return;
+    if (!shown) {
+      setShown(stage);
+      return;
+    }
+    setLeaving(true);
+    const timer = setTimeout(() => {
+      setShown(stage);
+      setLeaving(false);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [stage, shown]);
+  return { shown, leaving };
 }
 
-/** The finale: both winners side by side, each over its own chart. */
-function BothView({ polls, qr }: { polls: PollView[]; qr: React.ReactNode }) {
+function Scene({ stage, state, origin }: { stage: Stage; state: StateResponse; origin: string }) {
+  const poll = (id: PollId) => state.polls.find((p) => p.id === id)!;
+  switch (stage) {
+    case 'welcome':
+      return <Welcome state={state} />;
+    case 'king-voting':
+    case 'queen-voting':
+      return (
+        <Voting
+          poll={poll(stage === 'king-voting' ? 'king' : 'queen')}
+          state={state}
+          origin={origin}
+        />
+      );
+    case 'king-result':
+    case 'queen-result':
+      return <Result poll={poll(stage === 'king-result' ? 'king' : 'queen')} />;
+    case 'finale':
+      return <Finale state={state} king={poll('king')} queen={poll('queen')} />;
+  }
+}
+
+/* -------------------------------------------------------------- scenes */
+
+function Welcome({ state }: { state: StateResponse }) {
+  return (
+    <div className="hero">
+      <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
+        Tonight
+      </p>
+      <h1 className="rise" style={{ animationDelay: '0.25s' }}>
+        {state.title}
+      </h1>
+      <div className="hero-rule grow" style={{ animationDelay: '0.5s' }} />
+      <p className="hero-sub rise" style={{ animationDelay: '0.7s' }}>
+        Best Dress — King &amp; Queen
+      </p>
+      <p className="muted rise" style={{ animationDelay: '0.9s' }}>
+        Voting opens soon.
+      </p>
+    </div>
+  );
+}
+
+function Voting({ poll, state, origin }: { poll: PollView; state: StateResponse; origin: string }) {
+  const total = useCountUp(poll.total);
   return (
     <>
-      {qr && <div className="both-qr">{qr}</div>}
-      <div className="both">
-        {polls.map((poll) => (
-          <PollChart key={poll.id} poll={poll} focused compact />
-        ))}
+      <div className="scene-head rise">
+        <div>
+          <p className="eyebrow">
+            <span className="live-dot" aria-hidden="true" />
+            Voting now
+          </p>
+          <h1>{poll.title}</h1>
+        </div>
+        <div className="total">
+          <b>{total}</b>
+          {poll.total === 1 ? 'vote' : 'votes'}
+        </div>
+      </div>
+      <hr className="rule" />
+      <div className="board">
+        <aside className="qr-panel rise" style={{ animationDelay: '0.15s' }}>
+          {origin && <Qr value={`${origin}/`} size={280} label="QR code to open the voting page" />}
+          <p className="cta">
+            {state.mode === 'ticket' ? 'Scan the QR on your pass' : 'Scan to vote'}
+          </p>
+          <p className="url">{origin.replace(/^https?:\/\//, '')}</p>
+          <p className="muted" style={{ fontSize: 13 }}>
+            {state.mode === 'ticket' ? 'One vote per personal voting pass.' : 'One vote per phone.'}
+          </p>
+        </aside>
+        <div className="rise" style={{ animationDelay: '0.3s' }}>
+          <Bars poll={poll} />
+        </div>
       </div>
     </>
   );
 }
 
-function statusLine(polls: PollView[]): string {
-  return polls
-    .map((p) => {
-      const state =
-        p.status === 'open' ? 'voting open' : p.status === 'closed' ? 'closed' : 'opens soon';
-      return `${p.title}: ${state}${p.total ? ` · ${p.total} ${p.total === 1 ? 'vote' : 'votes'}` : ''}`;
-    })
-    .join('   ·   ');
-}
-
-function PollChart({
-  poll,
-  focused,
-  compact = false,
-}: {
-  poll: PollView;
-  focused: boolean;
-  compact?: boolean;
-}) {
-  const rows = poll.nominees
-    .map((n) => ({ ...n, votes: poll.tally[n.id] ?? 0 }))
-    .sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name));
-  const max = Math.max(1, ...rows.map((r) => r.votes));
-  const top = rows[0]?.votes ?? 0;
-  const leaders = top > 0 ? rows.filter((r) => r.votes === top) : [];
-  const closed = poll.status === 'closed';
-
+/** Bars grow in one by one, last place first, and the winner is named last. */
+function Result({ poll }: { poll: PollView }) {
+  const rows = ranked(poll);
+  const winners = leadersOf(rows);
+  const revealAt = 0.6 + rows.length * 0.22 + 0.9;
   return (
-    <section aria-label={poll.title} className={compact ? 'chart compact' : 'chart'}>
-      <div className="chart-head">
+    <div className="result">
+      <div className="scene-head rise">
         <div>
-          <p className="eyebrow" style={{ margin: 0 }}>
-            {poll.status === 'open' ? 'Voting open' : closed ? 'Final' : 'Opens soon'}
-          </p>
-          <h2>{poll.title}</h2>
+          <p className="eyebrow">Result</p>
+          <h1>{poll.title}</h1>
         </div>
         <div className="total">
           <b>{poll.total}</b>
           {poll.total === 1 ? 'vote' : 'votes'}
         </div>
       </div>
+      <hr className="rule" />
+      <div className="reveal" style={{ animationDelay: `${revealAt}s` }}>
+        {winners.length ? (
+          <>
+            <span className="label">{winners.length > 1 ? 'It’s a tie' : 'Winner'}</span>
+            <span className="name">{winners.map((w) => w.name).join(' & ')}</span>
+          </>
+        ) : (
+          <span className="name quiet">No votes were cast</span>
+        )}
+      </div>
+      <Bars poll={poll} reveal />
+    </div>
+  );
+}
 
-      {closed && leaders.length > 0 && (
-        <p className={compact ? 'winner big' : 'winner'}>
-          <span className="label">{leaders.length > 1 ? 'Tie' : 'Winner'}</span>
-          {leaders.map((l) => l.name).join(' & ')}
+function Finale({ state, king, queen }: { state: StateResponse; king: PollView; queen: PollView }) {
+  return (
+    <div className="finale">
+      <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
+        {state.title}
+      </p>
+      <h1 className="rise" style={{ animationDelay: '0.25s' }}>
+        Best Dress
+      </h1>
+      <div className="hero-rule grow" style={{ animationDelay: '0.5s' }} />
+      <div className="crowns">
+        <Crowned poll={king} role="King" delay={1.1} />
+        <Crowned poll={queen} role="Queen" delay={1.9} />
+      </div>
+    </div>
+  );
+}
+
+function Crowned({ poll, role, delay }: { poll: PollView; role: string; delay: number }) {
+  const winners = leadersOf(ranked(poll));
+  const votes = winners[0]?.votes ?? 0;
+  return (
+    <section className="crowned" style={{ animationDelay: `${delay}s` }} aria-label={poll.title}>
+      <p className="eyebrow">{role}</p>
+      <p className="name">{winners.length ? winners.map((w) => w.name).join(' & ') : '—'}</p>
+      {winners.length > 0 && (
+        <p className="muted">
+          {winners.length > 1 ? 'Tied · ' : ''}
+          {votes} {votes === 1 ? 'vote' : 'votes'} of {poll.total}
         </p>
-      )}
-
-      {rows.length ? (
-        <div className="bars" role="list">
-          {rows.map((row) => {
-            const lead = leaders.some((l) => l.id === row.id);
-            const share = poll.total ? Math.round((row.votes / poll.total) * 100) : 0;
-            return (
-              <div key={row.id} role="listitem" style={{ display: 'contents' }}>
-                <div className="bar-label">
-                  <b>{row.name}</b>
-                  {lead && !closed && <span className="tag">Leading</span>}
-                  {row.note && <small>{row.note}</small>}
-                </div>
-                <div
-                  className="bar-track"
-                  title={`${row.name} — ${row.votes} ${row.votes === 1 ? 'vote' : 'votes'} (${share}%)`}
-                >
-                  <div
-                    className={`bar${lead && focused ? ' lead' : ''}`}
-                    style={{ width: `calc(${(row.votes / max) * 100}% - 90px)` }}
-                  />
-                  <span className="bar-value">
-                    <b>{row.votes}</b>
-                    <span>{share}%</span>
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="chart-empty">Nominees appear here once they are added.</p>
       )}
     </section>
   );
 }
+
+/* ---------------------------------------------------------------- bars */
+
+const ROW = 58;
+
+function ranked(poll: PollView) {
+  return poll.nominees
+    .map((n) => ({ ...n, votes: poll.tally[n.id] ?? 0 }))
+    .sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name));
+}
+
+function leadersOf<T extends { votes: number }>(rows: T[]): T[] {
+  const top = rows[0]?.votes ?? 0;
+  return top > 0 ? rows.filter((r) => r.votes === top) : [];
+}
+
+/**
+ * Rows sit at fixed heights and slide (transform) to their new rank, so an
+ * overtake reads as movement, not as the list jumping. With `reveal`, every
+ * bar starts empty and grows in turn, from last place up to first.
+ */
+function Bars({ poll, reveal = false }: { poll: PollView; reveal?: boolean }) {
+  const rows = ranked(poll);
+  const leaders = leadersOf(rows);
+  const max = Math.max(1, rows[0]?.votes ?? 0);
+  const [grown, setGrown] = useState(!reveal);
+  useEffect(() => {
+    if (!reveal) return;
+    const timer = setTimeout(() => setGrown(true), 80);
+    return () => clearTimeout(timer);
+  }, [reveal]);
+
+  // Rows keep their DOM order (by id) and only their position changes, so they glide.
+  const order = new Map(rows.map((row, index) => [row.id, index]));
+  if (!rows.length) return <p className="chart-empty">Nominees appear here once they are added.</p>;
+  return (
+    <div className="lbars" role="list" style={{ height: rows.length * ROW }}>
+      {poll.nominees.map((nominee) => {
+        const index = order.get(nominee.id)!;
+        const row = rows[index];
+        const lead = leaders.some((l) => l.id === row.id);
+        const share = poll.total ? Math.round((row.votes / poll.total) * 100) : 0;
+        const delay = reveal ? 0.6 + (rows.length - 1 - index) * 0.22 : 0;
+        return (
+          <div
+            key={row.id}
+            role="listitem"
+            className="lrow"
+            style={{ transform: `translateY(${index * ROW}px)`, height: ROW }}
+          >
+            <div className="bar-label">
+              <b>{row.name}</b>
+              {lead && !reveal && <span className="tag">Leading</span>}
+              {row.note && <small>{row.note}</small>}
+            </div>
+            <div className="bar-track">
+              <div
+                className={`bar${lead ? ' lead' : ''}`}
+                style={{
+                  width: grown ? `calc(${(row.votes / max) * 100}% - 90px)` : 0,
+                  transitionDelay: `${delay}s`,
+                  transitionDuration: reveal ? '1.1s' : undefined,
+                }}
+              />
+              <span
+                className={`bar-value${reveal ? ' delayed' : ''}`}
+                style={reveal ? { animationDelay: `${delay + 0.7}s` } : undefined}
+              >
+                <b>
+                  <CountUp value={row.votes} />
+                </b>
+                <span>{share}%</span>
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CountUp({ value }: { value: number }) {
+  return <>{useCountUp(value)}</>;
+}
+
+/** Eases a number to its new value instead of letting it jump. */
+function useCountUp(value: number, ms = 700): number {
+  const [shown, setShown] = useState(value);
+  const from = useRef(value);
+  useEffect(() => {
+    const start = from.current;
+    if (start === value) return;
+    const began = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - began) / ms);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const next = Math.round(start + (value - start) * eased);
+      setShown(next);
+      from.current = next;
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [value, ms]);
+  return shown;
+}
+
+/* ---------------------------------------------------------- fullscreen */
 
 type FullscreenDoc = Document & { webkitFullscreenElement?: Element | null };
 

@@ -11,8 +11,9 @@ import {
   newTicketCode,
   readElection,
   removeNominee,
-  resetAllVoting,
-  resetVotes,
+  goToStage,
+  isStage,
+  resetPoll,
   updateElection,
 } from '@/lib/election';
 import { HttpError } from '@/lib/errors';
@@ -68,45 +69,27 @@ function apply(election: Election, body: Record<string, unknown>): string | null
       return null;
     }
     case 'setStatus': {
-      const poll = election.polls[pollOf(body)];
-      const status = body.status;
-      if (status === 'open') {
-        if (!poll.nominees.length)
-          throw new HttpError(400, 'Add the nominees before opening the vote');
-        poll.status = 'open';
-        poll.openedAt ??= Date.now();
-        poll.closedAt = null;
-      } else if (status === 'closed') {
-        poll.status = 'closed';
-        poll.closedAt = Date.now();
-      } else {
-        throw new HttpError(400, 'Unknown status');
-      }
+      // Opening or closing a vote moves the show (and so the Live screen) with it.
+      const pollId = pollOf(body);
+      if (body.status === 'open') goToStage(election, `${pollId}-voting`);
+      else if (body.status === 'closed') goToStage(election, `${pollId}-result`);
+      else throw new HttpError(400, 'Unknown status');
+      return null;
+    }
+    case 'setStage': {
+      if (!isStage(body.stage)) throw new HttpError(400, 'Unknown step');
+      goToStage(election, body.stage);
       return null;
     }
     case 'resetVotes': {
-      const poll = election.polls[pollOf(body)];
-      resetVotes(election, poll.id);
-      poll.openedAt = poll.status === 'open' ? Date.now() : null;
-      poll.closedAt = null;
-      return 'Votes cleared';
+      resetPoll(election, pollOf(body));
+      return 'Votes cleared — this vote is back to "not open yet"';
     }
     case 'clearNominees': {
       const removed = clearNominees(election, pollOf(body));
       return removed
         ? `Cleared ${removed} ${removed === 1 ? 'nominee' : 'nominees'}`
         : 'The list was already empty';
-    }
-    case 'resetAll': {
-      resetAllVoting(election);
-      return 'All votes cleared — both votes are back to "not open yet"';
-    }
-    case 'setDisplay': {
-      const display = body.display;
-      if (display !== 'auto' && display !== 'both' && !isPollId(display))
-        throw new HttpError(400, 'Unknown display');
-      election.display = display;
-      return null;
     }
     case 'setMode': {
       if (body.mode !== 'device' && body.mode !== 'ticket')
