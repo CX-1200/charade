@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAdmin } from '@/components/AdminUnlock';
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Qr } from '@/components/Qr';
 import { TopBar } from '@/components/TopBar';
+import { useRemaining } from '@/components/useLiveState';
 import { adminHeaders, api, post, session } from '@/lib/client';
 import { STAGES, type PollId, type Stage, type VoteMode } from '@/lib/types';
 import type { AdminView } from '@/lib/view';
@@ -42,7 +44,7 @@ export default function ManagePage() {
   useEffect(() => {
     if (!admin) return;
     void load();
-    const timer = setInterval(() => void load(), 3000);
+    const timer = setInterval(() => void load(), 1500);
     return () => clearInterval(timer);
   }, [admin, load]);
 
@@ -92,7 +94,7 @@ export default function ManagePage() {
           <>
             <div className="row" style={{ marginTop: 18 }}>
               <Link className="btn primary" href="/live">
-                Open live dashboard
+                Open the Live screen
               </Link>
               <TitleEditor
                 label="Rename event"
@@ -102,6 +104,7 @@ export default function ManagePage() {
               />
             </div>
 
+            <SessionSection view={view} busy={busy} act={act} />
             <ShowSection view={view} busy={busy} act={act} />
 
             {view.polls.map((poll) => (
@@ -122,14 +125,9 @@ function nextStep(view: AdminView): string {
   if (empty) return `Next: add the nominees for ${empty.title}.`;
   if (view.mode === 'ticket' && !view.tickets.length)
     return 'Next: make and print the voting passes.';
-  const open = view.polls.filter((p) => p.status === 'open');
-  if (open.length) {
-    return open
-      .map((p) => `${p.title} is live — ${p.total} ${p.total === 1 ? 'vote' : 'votes'}`)
-      .join(' · ');
-  }
-  if (view.stage === 'finale') return 'The show is complete — both winners are on the Live screen.';
-  return 'Ready. Use the show steps below to move the Live screen on.';
+  if (!view.session) return 'The site is off. Open a session when guests should start joining.';
+  if (view.stage === 'finale') return 'The show is complete — both winners are on every screen.';
+  return 'The site is on. Use the show steps below — every screen follows.';
 }
 
 type Act = (body: Record<string, unknown>) => Promise<boolean>;
@@ -221,19 +219,6 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
     if (ok) await act({ action: 'clearNominees', poll: pollId });
   };
 
-  const setStatus = async (status: 'open' | 'closed') => {
-    if (status === 'closed') {
-      const ok = await confirm({
-        title: `Close ${poll.title}?`,
-        message:
-          'No more votes are accepted and the live dashboard shows the winner. You can reopen it.',
-        confirmLabel: 'Close voting',
-      });
-      if (!ok) return;
-    }
-    await act({ action: 'setStatus', poll: pollId, status });
-  };
-
   return (
     <section className="section" style={{ marginTop: 18 }}>
       <div className="section-head">
@@ -250,19 +235,6 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
           <h2>{poll.title}</h2>
         </div>
         <div className="row">
-          {poll.status === 'open' ? (
-            <button className="btn" disabled={busy} onClick={() => setStatus('closed')}>
-              Close voting
-            </button>
-          ) : (
-            <button
-              className="btn"
-              disabled={busy || !poll.nominees.length}
-              onClick={() => setStatus('open')}
-            >
-              {poll.status === 'closed' ? 'Reopen voting' : 'Open voting'}
-            </button>
-          )}
           <button
             className="btn"
             disabled={busy || (!poll.total && poll.status === 'draft')}
@@ -507,57 +479,173 @@ function RulesSection({ view, busy, act }: { view: AdminView; busy: boolean; act
   );
 }
 
+/* ------------------------------------------------------------ session */
+
+/** Turns the site on and off, and shows the QR code guests scan to join. */
+function SessionSection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
+  const confirm = useConfirm();
+  const [origin, setOrigin] = useState('');
+  const [big, setBig] = useState(false);
+  useEffect(() => setOrigin(window.location.origin), []);
+  const link = view.session && origin ? `${origin}/?s=${view.session.id}` : '';
+
+  const end = async () => {
+    const ok = await confirm({
+      danger: true,
+      title: 'Turn the site off?',
+      message:
+        'Everyone is sent back to the holding page and the QR code stops working. Opening a new session gives a new QR code.',
+      confirmLabel: 'Turn off',
+    });
+    if (ok) await act({ action: 'endSession' });
+  };
+
+  return (
+    <section className="section" style={{ marginTop: 18 }}>
+      <div className="section-head">
+        <div>
+          <span className={`pill-status${view.session ? ' open' : ''}`}>
+            {view.session ? 'Site is on' : 'Site is off'}
+          </span>
+          <h2>Guests join here</h2>
+        </div>
+        {view.session ? (
+          <button className="btn" disabled={busy} onClick={end}>
+            Turn off
+          </button>
+        ) : (
+          <button
+            className="btn accent"
+            disabled={busy}
+            onClick={() => act({ action: 'openSession' })}
+          >
+            Open session
+          </button>
+        )}
+      </div>
+      {view.session ? (
+        <div className="join">
+          {link && <Qr value={link} size={200} label="QR code for guests to join" />}
+          <div>
+            <p style={{ margin: 0 }}>
+              Show this QR code (on the projector or on your phone). Only guests who scan it can
+              vote; anyone who opened the site before — or without it — just sees a holding page.
+            </p>
+            <div className="row" style={{ marginTop: 14 }}>
+              <button className="btn primary" onClick={() => setBig(true)}>
+                Show QR full screen
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="muted" style={{ margin: 0 }}>
+          Guests who open the site now see only a holding page and can’t do anything. Open a session
+          when you’re ready, and a QR code appears here for them to scan.
+        </p>
+      )}
+      {big && link && (
+        <div
+          className="qr-overlay"
+          onClick={() => setBig(false)}
+          role="dialog"
+          aria-label="Join QR code"
+        >
+          <p className="eyebrow">Scan to join</p>
+          <h1>{view.title}</h1>
+          <Qr value={link} size={640} label="QR code for guests to join" />
+          <p className="muted">Tap anywhere to close</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* --------------------------------------------------------------- show */
+
 type Step = { stage: Stage; title: string; action: string; confirm?: string };
 
 function stepsFor(view: AdminView): Step[] {
   const [king, queen] = view.polls;
   return [
-    { stage: 'welcome', title: 'Welcome screen', action: 'Show the welcome screen' },
-    { stage: 'king-voting', title: `${king.title} — voting`, action: 'Open King voting' },
+    {
+      stage: 'welcome',
+      title: 'Welcome — title on every screen',
+      action: 'Show the welcome screen',
+    },
+    { stage: 'king-open', title: `${king.title}: show the list`, action: 'Open voting for King' },
+    {
+      stage: 'king-voting',
+      title: `${king.title}: countdown, voting`,
+      action: 'Start King voting',
+    },
     {
       stage: 'king-result',
-      title: `${king.title} — result`,
-      action: 'Close voting & show King result',
-      confirm: `Close ${king.title}? No more votes are accepted, and the Live screen reveals the result.`,
+      title: `${king.title}: votes locked, winner shown`,
+      action: 'Stop now & show King result',
+      confirm: 'The countdown stops, votes lock, and every screen shows the result.',
     },
-    { stage: 'queen-voting', title: `${queen.title} — voting`, action: 'Open Queen voting' },
+    {
+      stage: 'queen-open',
+      title: `${queen.title}: show the list`,
+      action: 'Open voting for Queen',
+    },
+    {
+      stage: 'queen-voting',
+      title: `${queen.title}: countdown, voting`,
+      action: 'Start Queen voting',
+    },
     {
       stage: 'queen-result',
-      title: `${queen.title} — result`,
-      action: 'Close voting & show Queen result',
-      confirm: `Close ${queen.title}? No more votes are accepted, and the Live screen reveals the result.`,
+      title: `${queen.title}: votes locked, winner shown`,
+      action: 'Stop now & show Queen result',
+      confirm: 'The countdown stops, votes lock, and every screen shows the result.',
     },
-    {
-      stage: 'finale',
-      title: 'Best Dress — King & Queen',
-      action: 'Reveal Best Dress King & Queen',
-    },
+    { stage: 'finale', title: 'Both winners — King & Queen', action: 'Show both winners' },
   ];
 }
 
-/** The show, as a fixed run of steps: one button moves the Live screen on. */
+const COUNTDOWNS = [
+  { seconds: 30, label: '30 sec' },
+  { seconds: 60, label: '1 min' },
+  { seconds: 90, label: '1½ min' },
+  { seconds: 120, label: '2 min' },
+  { seconds: 180, label: '3 min' },
+  { seconds: 300, label: '5 min' },
+];
+
+/** The show, as a fixed run of steps: one button moves every screen on. */
 function ShowSection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
   const confirm = useConfirm();
+  const [countdown, setCountdown] = useState(60);
   const steps = stepsFor(view);
   const at = STAGES.indexOf(view.stage);
   const next = steps[at + 1];
-  const back = steps[at - 1];
+  const running = view.polls.find((p) => view.stage === `${p.id}-voting` && p.status === 'open');
+  const remaining = useRemaining(running?.endsAt, view.now - Date.now());
 
-  const go = async (step: Step, backwards: boolean) => {
-    let ok = true;
-    if (!backwards && step.confirm) {
-      ok = await confirm({
-        title: step.action + '?',
-        message: step.confirm,
-        confirmLabel: 'Yes, go',
-      });
-    } else if (backwards && step.stage.endsWith('-voting')) {
-      ok = await confirm({
-        title: 'Go back and reopen voting?',
-        message: 'The Live screen goes back to the voting screen and votes are accepted again.',
-        confirmLabel: 'Reopen voting',
-      });
+  // Back skips the countdown step: going back into it means starting a new one.
+  const backTo = (() => {
+    const previous = steps[at - 1];
+    if (!previous) return undefined;
+    return previous.stage.endsWith('-voting') ? steps[at - 2] : previous;
+  })();
+
+  const go = async (step: Step) => {
+    if (
+      step.confirm &&
+      !(await confirm({ title: `${step.action}?`, message: step.confirm, confirmLabel: 'Yes' }))
+    ) {
+      return;
     }
+    await act({ action: 'setStage', stage: step.stage, countdown });
+  };
+  const back = async (step: Step) => {
+    const ok = await confirm({
+      title: 'Go back a step?',
+      message: `Every screen goes back to “${step.title}”. Votes already cast are kept.`,
+      confirmLabel: 'Go back',
+    });
     if (ok) await act({ action: 'setStage', stage: step.stage });
   };
 
@@ -565,7 +653,8 @@ function ShowSection({ view, busy, act }: { view: AdminView; busy: boolean; act:
     <section className="section" style={{ marginTop: 18 }}>
       <h2>The show</h2>
       <p className="muted" style={{ margin: '6px 0 16px' }}>
-        The Live screen follows these steps. Press the button for the next one.
+        Guests’ phones and the Live screen follow these steps. Press the button for the next one.
+        {!view.session && ' (The site is off, so only the Live screen follows for now.)'}
       </p>
       <ol className="steps">
         {steps.map((step, i) => (
@@ -580,18 +669,46 @@ function ShowSection({ view, busy, act }: { view: AdminView; busy: boolean; act:
           </li>
         ))}
       </ol>
+      {running && (
+        <p className="timer-line">
+          <span className="live-dot" aria-hidden="true" />
+          {running.title}: <b>{formatClock(remaining)}</b> left · {running.total}{' '}
+          {running.total === 1 ? 'vote' : 'votes'} so far. Votes lock when it reaches 0:00.
+        </p>
+      )}
       <div className="row" style={{ marginTop: 16 }}>
-        {next ? (
-          <button className="btn accent big" disabled={busy} onClick={() => go(next, false)}>
+        {next && next.stage.endsWith('-voting') && (
+          <label className="countdown-pick">
+            <span>Countdown</span>
+            <select
+              value={countdown}
+              onChange={(e) => setCountdown(Number(e.target.value))}
+              disabled={busy}
+            >
+              {COUNTDOWNS.map((c) => (
+                <option key={c.seconds} value={c.seconds}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {next && (
+          <button className="btn accent big" disabled={busy} onClick={() => go(next)}>
             {next.action} →
           </button>
-        ) : null}
-        {back && (
-          <button className="btn ghost" disabled={busy} onClick={() => go(back, true)}>
+        )}
+        {backTo && (
+          <button className="btn ghost" disabled={busy} onClick={() => back(backTo)}>
             ← Back
           </button>
         )}
       </div>
     </section>
   );
+}
+
+function formatClock(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }

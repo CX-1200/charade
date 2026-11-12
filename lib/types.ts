@@ -24,6 +24,8 @@ export type Poll = {
   ballots: Record<string, Ballot>;
   openedAt: number | null;
   closedAt: number | null;
+  /** While voting runs: when the countdown ends and the votes lock. */
+  endsAt?: number | null;
 };
 
 /**
@@ -40,14 +42,20 @@ export type Ticket = {
 };
 
 /**
- * The show, in its fixed order. The admin steps through it in Manage and the
- * Live screen follows: King votes, King's result, Queen votes, Queen's
- * result, then the Best Dress finale with both winners.
+ * The show, in its fixed order. The admin steps through it in Manage and every
+ * screen follows — guests' phones and the Live screen alike:
+ *
+ *   welcome → King: list shown → King: countdown, voting → King: result →
+ *   Queen: the same three → finale (both winners).
+ *
+ * A voting stage turns into its result by itself when the countdown ends.
  */
 export const STAGES = [
   'welcome',
+  'king-open',
   'king-voting',
   'king-result',
+  'queen-open',
   'queen-voting',
   'queen-result',
   'finale',
@@ -58,6 +66,12 @@ export type Election = {
   title: string;
   /** Older stored elections have no value here; read it as 'welcome'. */
   stage?: Stage;
+  /**
+   * The site is only "on" while the admin has a session open. Guests join by
+   * scanning its QR code (which carries the id); anyone without it — early
+   * arrivals included — sees a holding page and can do nothing.
+   */
+  session?: { id: string; openedAt: number } | null;
   mode: VoteMode;
   polls: Record<PollId, Poll>;
   tickets: Record<string, Ticket>;

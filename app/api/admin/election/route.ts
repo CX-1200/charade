@@ -11,7 +11,9 @@ import {
   newTicketCode,
   readElection,
   removeNominee,
+  endSession,
   goToStage,
+  openSession,
   isStage,
   resetPoll,
   updateElection,
@@ -68,18 +70,18 @@ function apply(election: Election, body: Record<string, unknown>): string | null
       removeNominee(election, pollOf(body), body.nomineeId);
       return null;
     }
-    case 'setStatus': {
-      // Opening or closing a vote moves the show (and so the Live screen) with it.
-      const pollId = pollOf(body);
-      if (body.status === 'open') goToStage(election, `${pollId}-voting`);
-      else if (body.status === 'closed') goToStage(election, `${pollId}-result`);
-      else throw new HttpError(400, 'Unknown status');
-      return null;
-    }
     case 'setStage': {
       if (!isStage(body.stage)) throw new HttpError(400, 'Unknown step');
-      goToStage(election, body.stage);
+      goToStage(election, body.stage, body.countdown);
       return null;
+    }
+    case 'openSession': {
+      openSession(election);
+      return 'The site is on — guests can scan the QR code to join';
+    }
+    case 'endSession': {
+      endSession(election);
+      return 'The site is off — everyone sees the holding page again';
     }
     case 'resetVotes': {
       resetPoll(election, pollOf(body));

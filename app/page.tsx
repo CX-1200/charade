@@ -1,81 +1,77 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useAdmin } from '@/components/AdminUnlock';
 import { useConfirm } from '@/components/ConfirmDialog';
+import {
+  Backdrop,
+  Countdown,
+  Crown,
+  Finale,
+  OpenList,
+  Result,
+  useSceneTransition,
+  VotingBoard,
+  WATERMARK,
+  Welcome,
+  type PollView,
+} from '@/components/Show';
 import { TopBar } from '@/components/TopBar';
-import { useLiveState, type StateResponse } from '@/components/useLiveState';
+import { useLiveState, useRemaining, type ShowState } from '@/components/useLiveState';
 import { post, session, voterHeaders } from '@/lib/client';
+import type { PollId } from '@/lib/types';
 
-type PollView = StateResponse['polls'][number];
-type VoteResponse = StateResponse & { votedFor: string };
+/**
+ * The guest's phone. Outside the admin's session it is a holding page with
+ * nothing to tap. Inside it, the phone follows the show: the list, then a
+ * countdown to pick and confirm one name, then the live count, the result,
+ * and the finale.
+ */
+export default function GuestPage() {
+  const [admin] = useAdmin();
+  const router = useRouter();
+  useEffect(() => {
+    if (admin) router.replace('/manage');
+  }, [admin, router]);
 
-/** The phone screen a guest lands on after scanning the QR code. */
-export default function VotePage() {
-  const { state, setState, error, setError, refresh } = useLiveState(4000);
-  const confirm = useConfirm();
-  const [busy, setBusy] = useState(false);
-  const [code, setCode] = useState('');
-  const [hasTicket, setHasTicket] = useState(false);
+  const { state, setState, skew, error, setError, refresh } = useLiveState(2000);
 
-  // A personal pass opens this page as /?t=CODE: keep the code, then clean the
-  // URL so it does not linger in the address bar or get shared by accident.
+  // The join QR opens /?s=SESSION, a personal pass /?t=CODE. Keep them, then
+  // clean the URL so they don't linger in the address bar or get shared on.
   useEffect(() => {
     const url = new URL(window.location.href);
-    const fromLink = url.searchParams.get('t');
-    if (fromLink) {
-      session.setTicket(fromLink);
-      url.searchParams.delete('t');
-      window.history.replaceState(null, '', url.pathname + url.search);
-      void refresh();
-    }
-    setHasTicket(!!session.getTicket());
+    const joined = url.searchParams.get('s');
+    const ticket = url.searchParams.get('t');
+    if (!joined && !ticket) return;
+    if (joined) session.setSession(joined);
+    if (ticket) session.setTicket(ticket);
+    url.searchParams.delete('s');
+    url.searchParams.delete('t');
+    window.history.replaceState(null, '', url.pathname + url.search);
+    void refresh();
   }, [refresh]);
 
-  // A stored code the server rejects is dropped, so it is not retried forever.
+  // A stored pass the server rejects is dropped, so it is not retried forever.
+  const pass = state?.invited ? state.pass : 'none';
   useEffect(() => {
-    if (state?.pass === 'invalid') {
+    if (pass === 'invalid') {
       session.clearTicket();
-      setHasTicket(false);
       setError('That pass code is not valid — check it and try again');
     }
-  }, [state?.pass, setError]);
+  }, [pass, setError]);
 
-  async function applyPass() {
-    if (!code.trim()) return;
-    session.setTicket(code.trim());
-    setHasTicket(true);
-    setCode('');
-    await refresh();
-  }
+  const show = state?.invited ? state : null;
+  const votingPoll = show?.stage.endsWith('-voting')
+    ? show.polls.find((p) => show.stage === `${p.id}-voting`)
+    : undefined;
+  const remaining = useRemaining(votingPoll?.status === 'open' ? votingPoll.endsAt : null, skew);
+  const picking = !!show && !!votingPoll && remaining > 0 && !show.myVotes[votingPoll.id];
+  const { shown, leaving } = useSceneTransition(
+    show ? `${show.stage}${picking ? ':pick' : ''}` : undefined,
+  );
 
-  async function vote(poll: PollView, nomineeId: string, name: string) {
-    const ok = await confirm({
-      icon: poll.id === 'king' ? '🤵' : '👗',
-      title: `Vote for ${name}?`,
-      message: `${poll.title}. You can only vote once, and it can’t be changed.`,
-      confirmLabel: 'Vote',
-      cancelLabel: 'Not yet',
-    });
-    if (!ok) return;
-    setBusy(true);
-    try {
-      const data = await post<VoteResponse>(
-        '/api/vote',
-        { poll: poll.id, nomineeId },
-        voterHeaders(),
-      );
-      setState({ ...data, pass: state?.pass ?? 'none', device: state?.device ?? '' });
-      setError('');
-    } catch (e) {
-      setError((e as Error).message);
-      void refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!state) {
+  if (admin !== false || !state) {
     return (
       <>
         <TopBar />
@@ -86,138 +82,236 @@ export default function VotePage() {
     );
   }
 
-  const needsPass = state.mode === 'ticket' && state.pass !== 'valid';
-  // The single thing to act on: the first open vote this phone hasn't cast.
-  const focus = needsPass
-    ? null
-    : state.polls.find((p) => p.status === 'open' && !state.myVotes[p.id]);
+  if (!show) return <Holding title={state.title} />;
 
+  const stage = show.stage;
   return (
     <>
       <TopBar />
-      <main className="page">
-        <p className="eyebrow">Tonight</p>
-        <h1>{state.title}</h1>
-        <p className="status-line">{summary(state, needsPass)}</p>
+      <main className="page live phone">
+        <Backdrop word={WATERMARK[stage]} />
         {error && <div className="err">{error}</div>}
-
-        {needsPass && (
-          <section className="focus" style={{ marginTop: 28 }}>
-            <p className="eyebrow">Your voting pass</p>
-            <h2>Scan the QR on your pass</h2>
-            <p className="muted" style={{ margin: '8px 0 16px' }}>
-              Each guest has a personal pass. Scan its QR code, or type the code printed on it.
-            </p>
-            <div className="row" style={{ flexWrap: 'nowrap' }}>
-              <input
-                type="text"
-                value={code}
-                placeholder="ABCD-2345"
-                autoCapitalize="characters"
-                autoComplete="off"
-                onChange={(e) => setCode(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && applyPass()}
-                style={{ color: 'var(--ink)' }}
+        {shown && (
+          <div className={`scene${leaving ? ' out' : ''}`} key={shown}>
+            {votingPoll && shown.endsWith(':pick') ? (
+              <Picker
+                state={show}
+                poll={votingPoll}
+                remaining={remaining}
+                onVoted={(data) => setState(data)}
+                onError={setError}
+                refresh={refresh}
               />
-              <button className="btn accent" onClick={applyPass} disabled={!code.trim()}>
-                Use pass
-              </button>
-            </div>
-            {hasTicket && <p className="muted">Checking your pass…</p>}
-          </section>
+            ) : (
+              <GuestScene state={show} skew={skew} />
+            )}
+          </div>
         )}
-
-        <div style={{ display: 'grid', gap: 18, marginTop: 28 }}>
-          {state.polls.map((poll) => (
-            <PollCard
-              key={poll.id}
-              poll={poll}
-              myVote={state.myVotes[poll.id]}
-              focused={focus?.id === poll.id}
-              locked={needsPass}
-              busy={busy}
-              onVote={vote}
-            />
-          ))}
-        </div>
-
-        <p className="muted" style={{ marginTop: 32, fontSize: 14 }}>
-          Results are on the big screen — or <Link href="/live">follow them live</Link>.
-        </p>
       </main>
     </>
   );
 }
 
-function summary(state: StateResponse, needsPass: boolean): string {
-  if (needsPass) return 'Use your personal voting pass to vote.';
-  const open = state.polls.filter((p) => p.status === 'open');
-  const todo = open.filter((p) => !state.myVotes[p.id]);
-  if (todo.length) return `${todo.map((p) => p.title).join(' and ')} — voting is open.`;
-  if (open.length) return 'Thanks — your vote is in. Watch the results on the big screen.';
-  if (state.polls.every((p) => p.status === 'closed')) return 'Voting has closed. Thank you!';
-  return 'Voting opens soon — keep this page open.';
+function Holding({ title }: { title: string }) {
+  return (
+    <>
+      <TopBar />
+      <main className="page live phone">
+        <Backdrop word="Best Dress" />
+        <div className="scene">
+          <div className="hero">
+            <div className="rise">
+              <Crown size={56} className="float" />
+            </div>
+            <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
+              Best Dress
+            </p>
+            <h1 className="rise" style={{ animationDelay: '0.2s' }}>
+              {title}
+            </h1>
+            <p className="muted rise" style={{ animationDelay: '0.4s', maxWidth: 360 }}>
+              Voting hasn’t opened yet. When the host starts, scan the QR code they show to join.
+            </p>
+          </div>
+        </div>
+      </main>
+    </>
+  );
 }
 
-function PollCard({
+function GuestScene({ state, skew }: { state: ShowState; skew: number }) {
+  const poll = (id: PollId) => state.polls.find((p) => p.id === id)!;
+  const stage = state.stage;
+  switch (stage) {
+    case 'welcome':
+      return <Welcome state={state} />;
+    case 'king-open':
+    case 'queen-open':
+      return (
+        <OpenList
+          poll={poll(stage === 'king-open' ? 'king' : 'queen')}
+          note="Voting starts soon — get ready to pick"
+        />
+      );
+    case 'king-voting':
+    case 'queen-voting': {
+      const p = poll(stage === 'king-voting' ? 'king' : 'queen');
+      const mine = p.nominees.find((n) => n.id === state.myVotes[p.id]);
+      return (
+        <VotingBoard
+          poll={p}
+          skew={skew}
+          label="Live count"
+          aside={
+            mine && (
+              <div className="voted rise">
+                <span className="tick" aria-hidden="true">
+                  ✓
+                </span>
+                <span>
+                  You voted for <b>{mine.name}</b>
+                </span>
+              </div>
+            )
+          }
+        />
+      );
+    }
+    case 'king-result':
+    case 'queen-result':
+      return <Result poll={poll(stage === 'king-result' ? 'king' : 'queen')} />;
+    case 'finale':
+      return <Finale state={state} king={poll('king')} queen={poll('queen')} />;
+  }
+}
+
+type VoteResponse = ShowState & { votedFor: string };
+
+/** Pick one name, then confirm — before the countdown runs out. */
+function Picker({
+  state,
   poll,
-  myVote,
-  focused,
-  locked,
-  busy,
-  onVote,
+  remaining,
+  onVoted,
+  onError,
+  refresh,
 }: {
+  state: ShowState;
   poll: PollView;
-  myVote: string | null;
-  focused: boolean;
-  locked: boolean;
-  busy: boolean;
-  onVote: (poll: PollView, nomineeId: string, name: string) => void;
+  remaining: number;
+  onVoted: (data: ShowState) => void;
+  onError: (message: string) => void;
+  refresh: () => Promise<unknown>;
 }) {
-  const chosen = myVote ? poll.nominees.find((n) => n.id === myVote) : null;
-  const canVote = poll.status === 'open' && !myVote && !locked;
-  const state = myVote
-    ? 'Your vote is in'
-    : poll.status === 'open'
-      ? focused
-        ? 'Now voting — tap your pick'
-        : 'Open'
-      : poll.status === 'closed'
-        ? 'Voting closed'
-        : 'Opens soon';
+  const confirm = useConfirm();
+  const [picked, setPicked] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState('');
+  const needsPass = state.mode === 'ticket' && state.pass !== 'valid';
+  const chosen = poll.nominees.find((n) => n.id === picked);
+  const role = poll.id === 'king' ? 'King' : 'Queen';
+
+  async function submit() {
+    if (!chosen) return;
+    const ok = await confirm({
+      icon: '👑',
+      title: `Vote for ${chosen.name}?`,
+      message: `You can vote for only one person as Best Dress ${role}, and you can’t change it afterwards.`,
+      confirmLabel: 'Yes, vote',
+      cancelLabel: 'Go back',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const data = await post<VoteResponse>(
+        '/api/vote',
+        { poll: poll.id, nomineeId: chosen.id },
+        voterHeaders(),
+      );
+      onVoted({ ...data, pass: state.pass, device: state.device });
+      onError('');
+    } catch (e) {
+      onError((e as Error).message);
+      void refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <section className={focused ? 'focus' : 'quiet-card'}>
-      <p className="eyebrow">{state}</p>
-      <h2>{poll.title}</h2>
-      {chosen && (
-        <div className="voted">
-          <span className="tick" aria-hidden="true">
-            ✓
-          </span>
-          <span>
-            You voted for <b>{chosen.name}</b>
-          </span>
+    <div className="picker">
+      <div className="picker-head rise">
+        <div>
+          <p className="eyebrow">
+            <span className="live-dot" aria-hidden="true" />
+            Vote now
+          </p>
+          <h1>{poll.title}</h1>
+          <p className="muted">Tap one name, then confirm.</p>
         </div>
-      )}
-      {canVote && (
-        <div className="nominees">
-          {poll.nominees.map((n) => (
+        <Countdown
+          ms={remaining}
+          totalMs={poll.endsAt && poll.openedAt ? poll.endsAt - poll.openedAt : 0}
+        />
+      </div>
+
+      {needsPass ? (
+        <section className="focus" style={{ marginTop: 18 }}>
+          <p className="eyebrow">Your voting pass</p>
+          <h2>Enter the code on your pass</h2>
+          <div className="row" style={{ flexWrap: 'nowrap', marginTop: 14 }}>
+            <input
+              type="text"
+              value={code}
+              placeholder="ABCD-2345"
+              autoCapitalize="characters"
+              autoComplete="off"
+              onChange={(e) => setCode(e.target.value)}
+              style={{ color: 'var(--ink)' }}
+            />
             <button
-              key={n.id}
-              className="nominee"
-              disabled={busy}
-              onClick={() => onVote(poll, n.id, n.name)}
+              className="btn accent"
+              disabled={!code.trim()}
+              onClick={() => {
+                session.setTicket(code.trim());
+                setCode('');
+                void refresh();
+              }}
             >
-              <span>
-                <span className="name">{n.name}</span>
-                {n.note && <span className="sub">{n.note}</span>}
-              </span>
-              <span className="go">Vote</span>
+              Use pass
             </button>
-          ))}
-        </div>
+          </div>
+        </section>
+      ) : (
+        <>
+          <div className="nominees pick-list" role="radiogroup" aria-label={poll.title}>
+            {poll.nominees.map((n, i) => (
+              <button
+                key={n.id}
+                role="radio"
+                aria-checked={picked === n.id}
+                className={`nominee${picked === n.id ? ' picked' : ''} rise`}
+                style={{ animationDelay: `${0.1 + i * 0.05}s` }}
+                disabled={busy}
+                onClick={() => setPicked(n.id)}
+              >
+                <span>
+                  <span className="name">{n.name}</span>
+                  {n.note && <span className="sub">{n.note}</span>}
+                </span>
+                <span className="check" aria-hidden="true">
+                  {picked === n.id ? '✓' : ''}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="confirm-bar">
+            <button className="btn accent big" disabled={!chosen || busy} onClick={submit}>
+              {chosen ? `Confirm vote for ${chosen.name}` : 'Pick a name first'}
+            </button>
+          </div>
+        </>
       )}
-    </section>
+    </div>
   );
 }

@@ -29,6 +29,7 @@ function newPoll(id: PollId): Poll {
     ballots: {},
     openedAt: null,
     closedAt: null,
+    endsAt: null,
   };
 }
 
@@ -85,14 +86,33 @@ const READ_CACHE_MS = 1000;
 let cached: { at: number; election: Election } | null = null;
 
 async function load(): Promise<Election> {
-  return (await kvGet<Election>(KEY)) ?? freshElection();
+  return settle((await kvGet<Election>(KEY)) ?? freshElection());
 }
 
 export async function readElection(): Promise<Election> {
-  if (cached && Date.now() - cached.at < READ_CACHE_MS) return structuredClone(cached.election);
+  if (cached && Date.now() - cached.at < READ_CACHE_MS) {
+    return settle(structuredClone(cached.election));
+  }
   const election = await load();
   cached = { at: Date.now(), election };
   return structuredClone(election);
+}
+
+/**
+ * When a countdown has run out, its vote is over: the poll closes at the
+ * deadline and the show moves on to the result. Applied on every read, so
+ * the lock happens on time even if nobody writes; the next write saves it.
+ */
+export function settle(election: Election, now = Date.now()): Election {
+  const stage = election.stage;
+  for (const id of POLL_IDS) {
+    const poll = election.polls[id];
+    if (poll.status !== 'open' || !poll.endsAt || now < poll.endsAt) continue;
+    poll.status = 'closed';
+    poll.closedAt = poll.endsAt;
+    if (stage === `${id}-voting`) election.stage = `${id}-result`;
+  }
+  return election;
 }
 
 /** Every write goes through here: one at a time, across all server instances. */
@@ -180,6 +200,7 @@ export function resetPoll(election: Election, pollId: PollId): void {
   poll.status = 'draft';
   poll.openedAt = null;
   poll.closedAt = null;
+  poll.endsAt = null;
   rewindStage(election, pollId);
 }
 
@@ -197,8 +218,7 @@ export function clearNominees(election: Election, pollId: PollId): number {
  */
 function rewindStage(election: Election, pollId: PollId): void {
   const stage = election.stage ?? 'welcome';
-  const affected =
-    stage === 'finale' || stage === `${pollId}-voting` || stage === `${pollId}-result`;
+  const affected = stage === 'finale' || stage.startsWith(`${pollId}-`);
   if (!affected) return;
   election.stage =
     pollId === 'queen' && election.polls.king.status === 'closed' ? 'king-result' : 'welcome';
@@ -208,49 +228,90 @@ export function isStage(value: unknown): value is Stage {
   return typeof value === 'string' && (STAGES as readonly string[]).includes(value);
 }
 
+export const MIN_COUNTDOWN = 10;
+export const MAX_COUNTDOWN = 30 * 60;
+
 /**
- * Moves the show to a stage, opening or closing the vote it belongs to. Any
- * step can be revisited (to fix a mistake), but each needs what comes before it.
+ * Moves the show to a stage. Each step needs what comes before it; any step
+ * can be revisited to fix a mistake.
+ *
+ * - X-open: the list is on every screen, nobody can vote yet.
+ * - X-voting: the countdown starts; votes lock when it ends (see settle).
+ * - X-result: stops the countdown early, if it is still running.
  */
-export function goToStage(election: Election, stage: Stage): void {
+export function goToStage(election: Election, stage: Stage, countdownSec?: unknown): void {
   const { king, queen } = election.polls;
-  const open = (poll: Poll) => {
-    if (!poll.nominees.length) {
-      throw new HttpError(400, `Add the nominees for ${poll.title} first`);
-    }
-    poll.status = 'open';
-    poll.openedAt ??= Date.now();
-    poll.closedAt = null;
+  const needNominees = (poll: Poll) => {
+    if (!poll.nominees.length) throw new HttpError(400, `Add the nominees for ${poll.title} first`);
   };
-  const close = (poll: Poll) => {
-    if (poll.status === 'draft') throw new HttpError(409, `${poll.title} has not been opened yet`);
+  const show = (poll: Poll) => {
+    needNominees(poll);
+    poll.status = 'draft';
+    poll.endsAt = null;
+  };
+  const start = (poll: Poll) => {
+    needNominees(poll);
+    const seconds = Math.round(Number(countdownSec));
+    if (!Number.isFinite(seconds) || seconds < MIN_COUNTDOWN || seconds > MAX_COUNTDOWN) {
+      throw new HttpError(400, `Pick a countdown between ${MIN_COUNTDOWN} seconds and 30 minutes`);
+    }
+    const now = Date.now();
+    poll.status = 'open';
+    poll.openedAt = now;
+    poll.closedAt = null;
+    poll.endsAt = now + seconds * 1000;
+  };
+  const stop = (poll: Poll) => {
+    if (poll.status === 'draft') throw new HttpError(409, `${poll.title} has not started yet`);
     if (poll.status === 'open') {
+      const now = Date.now();
       poll.status = 'closed';
-      poll.closedAt = Date.now();
+      poll.closedAt = now;
+      poll.endsAt = Math.min(poll.endsAt ?? now, now);
     }
   };
   switch (stage) {
     case 'welcome':
       break;
+    case 'king-open':
+      show(king);
+      break;
     case 'king-voting':
-      open(king);
+      start(king);
       break;
     case 'king-result':
-      close(king);
+      stop(king);
+      break;
+    case 'queen-open':
+      show(queen);
       break;
     case 'queen-voting':
-      open(queen);
+      start(queen);
       break;
     case 'queen-result':
-      close(queen);
+      stop(queen);
       break;
     case 'finale':
       if (king.status !== 'closed' || queen.status !== 'closed') {
-        throw new HttpError(409, 'Close both King and Queen voting first');
+        throw new HttpError(409, 'Finish both King and Queen voting first');
       }
       break;
   }
   election.stage = stage;
+}
+
+/** Turns the site on: a fresh id, so earlier links and QR codes stop working. */
+export function openSession(election: Election): void {
+  election.session = { id: randomBytes(9).toString('base64url'), openedAt: Date.now() };
+}
+
+export function endSession(election: Election): void {
+  election.session = null;
+}
+
+export function inSession(election: Election, sessionId: unknown): boolean {
+  const id = election.session?.id;
+  return !!id && typeof sessionId === 'string' && sessionId === id;
 }
 
 function releaseTicket(election: Election, voterKey: string, pollId: PollId): void {

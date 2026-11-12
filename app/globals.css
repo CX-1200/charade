@@ -371,13 +371,6 @@ textarea {
 .focus .nominee .sub {
   color: rgba(255, 253, 249, 0.6);
 }
-.nominee .go {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  opacity: 0.75;
-}
 .voted {
   display: flex;
   align-items: center;
@@ -403,41 +396,6 @@ textarea {
 
 /* --------------------------------------------------------- live board */
 
-.board {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 40px;
-  align-items: start;
-}
-@media (max-width: 900px) {
-  .board {
-    grid-template-columns: 1fr;
-  }
-}
-.qr-panel {
-  position: sticky;
-  top: 24px;
-  text-align: center;
-}
-.qr-panel img {
-  width: 100%;
-  max-width: 280px;
-  border-radius: 16px;
-  background: #fff;
-  padding: 12px;
-  border: 1px solid var(--line);
-}
-.qr-panel .url {
-  font-size: 14px;
-  color: var(--muted);
-  word-break: break-all;
-  margin-top: 10px;
-}
-.qr-panel .cta {
-  font-family: var(--serif);
-  font-size: 26px;
-  margin: 14px 0 0;
-}
 .bar-label {
   font-size: 16px;
   line-height: 1.25;
@@ -1114,29 +1072,6 @@ body:has(.live) {
   font-weight: 700;
 }
 
-/* Voting: the QR sits in an aubergine card, the one dark block on screen. */
-.qr-card {
-  background: var(--ink);
-  color: var(--stone);
-  border-radius: 22px;
-  padding: 22px 22px 20px;
-  box-shadow: 0 24px 50px rgba(45, 25, 71, 0.22);
-}
-.qr-card img {
-  border: none;
-}
-.qr-card .cta {
-  color: #fff;
-}
-.qr-card .url {
-  color: var(--lilac);
-}
-.qr-note {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: var(--lilac);
-}
-
 /* Rows: rank, initials, name. */
 .lrow .bar-label {
   display: flex;
@@ -1235,4 +1170,282 @@ body:has(.live) {
   .confetti {
     display: none;
   }
+}
+
+/* ------------------------------------------------- open & voting scenes */
+
+.waiting {
+  font-family: var(--serif);
+  font-size: clamp(20px, 2.4vw, 30px);
+  margin: 0 0 24px;
+}
+.nominee-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.nominee-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(247, 245, 248, 0.75);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.nominee-card b {
+  display: block;
+  font-family: var(--serif);
+  font-size: 22px;
+}
+.nominee-card small {
+  color: var(--muted);
+  font-size: 13px;
+}
+.voting-board {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 18px 44px;
+  align-items: start;
+}
+.voting-board > .voted {
+  grid-column: 1;
+  margin: 0;
+}
+.voting-board > div:last-child {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+/* The countdown: digits inside a ring that empties. */
+.countdown {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+}
+.countdown svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+.countdown circle {
+  fill: none;
+  stroke-width: 7;
+}
+.countdown .track {
+  stroke: var(--lilac);
+  opacity: 0.6;
+}
+.countdown .left {
+  stroke: var(--ink);
+  stroke-linecap: round;
+  transition:
+    stroke-dashoffset 0.25s linear,
+    stroke 0.4s;
+}
+.countdown .digits {
+  font-family: var(--serif);
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.countdown small {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+.countdown.urgent .left {
+  stroke: var(--accent);
+}
+.countdown.urgent .digits {
+  color: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* -------------------------------------------------------- guest phone */
+
+.picker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.picker-head h1 {
+  font-size: clamp(28px, 7vw, 44px);
+}
+.picker-head .muted {
+  margin: 6px 0 0;
+}
+.picker-head .countdown {
+  width: 120px;
+  flex: none;
+}
+.picker-head .countdown .digits {
+  font-size: 30px;
+}
+.picker-head .countdown small {
+  font-size: 10px;
+}
+.nominee.picked {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+.nominee.picked .sub {
+  color: var(--lilac);
+}
+.nominee .check {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+  font-weight: 700;
+}
+.nominee.picked .check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pick-list {
+  padding-bottom: 96px;
+}
+/* The confirm button stays in reach of the thumb. */
+.confirm-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, var(--ground) 30%);
+}
+.confirm-bar .btn {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  margin: 0 auto;
+}
+
+@media (max-width: 760px) {
+  .page.phone {
+    padding-top: 22px;
+  }
+  .voting-board {
+    grid-template-columns: 1fr;
+  }
+  .voting-board > div:last-child {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .voting-board .countdown {
+    width: 150px;
+    margin: 0 auto;
+  }
+  .voting-board .countdown .digits {
+    font-size: 38px;
+  }
+  .lrow {
+    grid-template-columns: minmax(0, 52%) 1fr;
+    column-gap: 10px;
+  }
+  .rank {
+    display: none;
+  }
+  .avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+  .bar-value b {
+    font-size: 15px;
+  }
+  .bar-value span {
+    display: none;
+  }
+  .scene-head .total b {
+    font-size: 28px;
+  }
+  .ticker-item {
+    font-size: 19px;
+    padding: 12px 18px;
+  }
+  .watermark {
+    font-size: 40vw;
+  }
+}
+
+/* -------------------------------------------------------------- manage */
+
+.join {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.join img {
+  width: 180px;
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px;
+}
+.join > div {
+  flex: 1;
+  min-width: 240px;
+}
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: var(--ground);
+  text-align: center;
+  cursor: zoom-out;
+  animation: fade-in 0.2s ease-out;
+}
+.qr-overlay img {
+  width: min(70vh, 86vw);
+  height: auto;
+  background: #fff;
+  padding: 18px;
+  border-radius: 24px;
+  box-shadow: 0 24px 60px rgba(45, 25, 71, 0.2);
+}
+.timer-line {
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+.timer-line b {
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+}
+.countdown-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.countdown-pick select {
+  font: inherit;
+  color: var(--ink);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
 }

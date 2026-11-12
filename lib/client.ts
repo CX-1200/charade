@@ -24,6 +24,7 @@ export const post = <T>(url: string, body: unknown, headers?: Record<string, str
 const ADMIN_KEY = 'bestdress:admin';
 const DEVICE_KEY = 'bestdress:device';
 const TICKET_KEY = 'bestdress:ticket';
+const SESSION_KEY = 'bestdress:session';
 
 function safe<T>(fn: () => T, fallback: T): T {
   try {
@@ -63,6 +64,10 @@ export const session = {
   getDevice: () => safe(() => localStorage.getItem(DEVICE_KEY), null),
   setDevice: (id: string) => safe(() => localStorage.setItem(DEVICE_KEY, id), undefined),
 
+  /** The session this phone joined by scanning the admin's QR code. */
+  getSession: () => safe(() => localStorage.getItem(SESSION_KEY), null),
+  setSession: (id: string) => safe(() => localStorage.setItem(SESSION_KEY, id), undefined),
+
   getTicket: () => safe(() => localStorage.getItem(TICKET_KEY), null),
   setTicket: (code: string) => safe(() => localStorage.setItem(TICKET_KEY, code), undefined),
   clearTicket: () => safe(() => localStorage.removeItem(TICKET_KEY), undefined),
@@ -73,6 +78,8 @@ export function voterHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   const device = session.getDevice();
   const ticket = session.getTicket();
+  const joined = session.getSession();
+  if (joined) headers['x-session'] = joined;
   if (device) headers['x-device-id'] = device;
   if (ticket) headers['x-ticket'] = ticket;
   return headers;

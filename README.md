@@ -1,23 +1,33 @@
 # 👑 Best Dress Vote
 
-Live voting for **Best Dress — King** and **Best Dress — Queen**. Guests scan a QR code, tap their pick, and the big screen updates as the votes come in.
+Live voting for **Best Dress — King** and **Best Dress — Queen**, run as a show: the admin steps through it and every guest's phone and the big screen follow.
 
-- **Vote** (`/`) — the page a phone opens after scanning. Shows the vote that is open, one tap + confirm to vote, then "You voted for …". No counts here, so nobody follows the crowd.
-- **Live** (`/live`) — the big screen, with no controls of its own. It follows the show the admin runs from Manage, in a fixed order: Welcome → King voting (QR + live counts) → King result → Queen voting → Queen result → Best Dress finale with both winners. Scenes cross-fade, bars glide, rows slide when someone overtakes, numbers count up, and results are revealed bar by bar before the winner is named. Has a Full screen button.
-- **Manage** (admin only) — event title, **The show** (one button steps the Live screen through the event, with Back to undo), the two nominee lists (edit, ✕ remove, **Clear list**), open / close / reopen and **Reset votes** for King and Queen separately, voting rules, and voting passes. Every destructive action asks for confirmation first.
+## Who sees what
 
-  Guests only see **Vote** and **Live**. The way in is the faint lock at the far right of the top bar: tap it and enter the admin password, and the Manage tab appears. Hiding the tab is a courtesy, not the protection — every admin request is still checked against a password-issued token on the server.
-- **Passes** (`/passes`, admin) — a printable sheet of personal voting passes, cut along the dashed lines.
+- **The site is off until the admin opens a session.** Anyone who opens it before then — or later without the session's QR code — sees a holding page with the event's name and nothing to tap. They are "uninvited": the server gives them no state, no device id, and refuses their votes.
+- **Guests** join by scanning the QR code the admin shows (it carries the session id). Their one page (`/`) follows the show; there are no tabs.
+- **The admin** unlocks with the faint lock at the far right of the top bar. The admin view has two tabs:
+  - **Live** (`/live`) — for the projector. No controls and no QR code; it shows each step, including the countdown.
+  - **Manage** (`/manage`) — the session and its join QR (with a full-screen QR to project), **The show**, the nominee lists, **Reset votes** per vote, voting rules and passes.
 
-## Running an event
+Hiding tabs is a courtesy, not the protection: every admin request needs a password-issued token, and every vote needs the current session id.
 
-1. Tap the faint lock at the top right, enter the admin password, and open **Manage**.
-2. Paste the nominees for King and for Queen — one per line, with an optional note after a `|` (e.g. `Alex Tan | Table 4`).
-3. Pick the **voting rules** (below). For passes: make one per guest, then **Print passes**.
-4. Put **Live** on the big screen.
-5. In **The show**, press the button for each step: Open King voting → Close voting & show King result → Open Queen voting → Close voting & show Queen result → Reveal Best Dress King & Queen. Closing a vote asks for confirmation; **Back** undoes a step.
+## Running the show
 
-**Reset votes** sits next to each vote's Open/Close button and clears that vote only (with confirmation).
+1. Unlock, paste the nominees for King and Queen (one per line, optional note after `|`), and pick the voting rules.
+2. **Open session** → a QR code appears. Show it (full screen on the projector, or on your phone); guests scan to join. **Turn off** ends the session and sends everyone back to the holding page; a new session gets a new QR code.
+3. Put **Live** on the projector, then press the button in **The show** for each step:
+
+| Admin presses | Guests' phones | Live screen |
+|---|---|---|
+| (start) | Event title, waiting | Title and the nominees gliding by |
+| Open voting for King | King's list, "voting starts soon" | King's list |
+| Start King voting (choose the countdown: 30 s – 5 min) | Pick one name → confirm ("only one, can't change") → live count | Countdown + live count |
+| — countdown reaches 0:00 (or **Stop now**) | Votes lock; the winner, or everyone tied | Result, revealed bar by bar |
+| Open voting for Queen → Start Queen voting | Same as King | Same as King |
+| Show both winners | Best Dress — King & Queen | Best Dress — King & Queen |
+
+Guests who voted, or whose countdown ran out, switch to the live count automatically. **Back** steps back if you press too early (votes already cast are kept). Every closing or destructive action asks for confirmation.
 
 ## One vote per person
 
@@ -25,8 +35,8 @@ There are no logins, so "one person" has to be tied to something the person hold
 
 | Rule | How it works | Stops | Doesn't stop |
 | --- | --- | --- | --- |
-| **One vote per phone** (default) | Everyone scans the same QR. The server gives each browser a random id, kept in an httpOnly cookie *and* in localStorage — clearing one restores it from the other. | Voting twice from the same browser; clearing cookies; reloading; scripted votes without a device | A private/incognito window, or a second phone |
-| **One vote per voting pass** | Each guest gets a printed pass with its own QR code; each code votes once for King and once for Queen, on whichever phone scans it. Codes are 8 characters (~850 billion combinations) and wrong guesses are rate-limited. | Everything above, including incognito and second phones | Someone handing their pass to someone else |
+| **One vote per phone** (default) | Everyone scans the session's join QR. The server gives each browser a random id, kept in an httpOnly cookie *and* in localStorage — clearing one restores it from the other. | Voting twice from the same browser; clearing cookies; reloading; scripted votes without a device | A private/incognito window, or a second phone |
+| **One vote per voting pass** | Guests join with the session QR as usual, and also hold a printed pass (scan its QR or type its code); each code votes once for King and once for Queen, on whichever phone uses it. Codes are 8 characters (~850 billion combinations) and wrong guesses are rate-limited. | Everything above, including incognito and second phones | Someone handing their pass to someone else |
 
 **Why not block by IP address?** At a venue everyone is on the same Wi-Fi, and mobile carriers put thousands of phones behind one IP — so an IP rule would block real guests long before it stopped a cheat. IPs are used only to rate-limit *wrong* passwords and pass codes; correct votes are never limited (tested: 300 phones on one IP voting at once, all counted).
 
@@ -35,7 +45,8 @@ Other ways people do this, and why they're not built in: SMS/email one-time code
 ## Security
 
 - Admin: one password (`ADMIN_PASSWORD`) → a signed 12-hour token, checked on every admin action. No default password in production; 10 wrong passwords from one address lock it out for 15 minutes. Use a different password from any other app.
-- The public API exposes titles, nominees and counts only — never who voted for whom, and never the pass codes.
+- Outside the session the API gives only the event title. Inside it, titles, nominees and counts — never who voted for whom, the pass codes or the session id.
+- The countdown is enforced on the server: once it ends, the vote is closed and further votes are refused, whatever a phone's clock says.
 - Votes are written one at a time under a lock (also across server instances), so simultaneous votes are never lost.
 - Size-capped request bodies, generic server errors, and browser security headers (CSP, no framing, `nosniff`, referrer and permissions policies).
 
@@ -60,21 +71,24 @@ Without a database configured, data is kept in `./.data/vote.json`.
 
 ```
 app/
-  page.tsx                    Vote (guest phones)
-  live/page.tsx               Live dashboard (big screen)
-  manage/page.tsx             Admin: nominees, open/close, rules, passes
+  page.tsx                    Guest phones: holding page, or the show
+  live/page.tsx               Live screen (admin, projector)
+  manage/page.tsx             Admin: session + QR, the show, nominees, rules, passes
   passes/page.tsx             Printable voting passes
-  api/state/route.ts          Public state + device id (polled)
-  api/vote/route.ts           Cast a vote
+  api/state/route.ts          State for admin / session guests, holding view for others
+  api/vote/route.ts           Cast a vote (session guests, before the countdown ends)
   api/admin/route.ts          Password → admin token
   api/admin/election/route.ts Admin read + actions
   api/health, api/keepalive   Store check; daily keep-alive cron
 lib/
-  election.ts                 Storage and voting rules
+  election.ts                 Storage, the show's steps, countdown lock, sessions
   voter.ts                    Who is voting: device id or pass code
   view.ts                     What each screen may see
   store.ts                    KV store: turso / redis / file / memory + locking
   admin.ts, ratelimit.ts      Admin tokens; wrong-guess limits
   http.ts, errors.ts          Shared API responses
-components/                   Top bar, QR, confirm dialog, admin unlock
+components/
+  Show.tsx                    The scenes, shared by phones and the Live screen
+  useLiveState.ts             Polling, server clock, countdown
+  ...                         Top bar, QR, confirm dialog, admin unlock
 ```

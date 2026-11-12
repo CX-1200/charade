@@ -5,27 +5,26 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
 
-const GUEST_TABS = [
-  { href: '/', label: 'Vote' },
+const ADMIN_TABS = [
   { href: '/live', label: 'Live' },
+  { href: '/manage', label: 'Manage' },
 ];
-const ADMIN_TABS = [...GUEST_TABS, { href: '/manage', label: 'Manage' }];
 
 /**
- * Brand left, plain text tabs centred, page actions right. Guests see Vote and
- * Live only; Manage appears once this browser is unlocked through the hidden
- * lock (the faint mark at the far right). Hiding the tab is a courtesy, not
+ * Brand left, plain text tabs centred, page actions right. Guests get no tabs
+ * at all — their one page follows the show. Live and Manage appear once this
+ * browser is unlocked through the hidden lock (the faint mark at the far right). Hiding the tab is a courtesy, not
  * the security: every admin request still needs a password-issued token.
  */
 export function TopBar({ actions }: { actions?: React.ReactNode }) {
   const path = usePathname();
   const [admin] = useAdmin();
   const [unlocking, setUnlocking] = useState(false);
-  const tabs = admin ? ADMIN_TABS : GUEST_TABS;
+  const tabs = admin ? ADMIN_TABS : [];
 
   return (
     <header className="topbar">
-      <Link href="/" className="brand">
+      <Link href={admin ? '/manage' : '/'} className="brand">
         Best Dress<small>Vote</small>
       </Link>
       <nav className="tabs" aria-label="Main">

@@ -1,11 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { castVote, isPollId, readElection, updateElection } from '@/lib/election';
+import { castVote, inSession, isPollId, readElection, updateElection } from '@/lib/election';
 import { HttpError } from '@/lib/errors';
 import { fail, readJson } from '@/lib/http';
 import { publicView } from '@/lib/view';
 import { deviceOf, identify, rememberDevice } from '@/lib/voter';
 
 export const dynamic = 'force-dynamic';
+
+const notInvited = () =>
+  new HttpError(403, 'This vote is only open to guests who scanned the QR code at the event');
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,9 +18,12 @@ export async function POST(request: NextRequest) {
     // Who is voting is worked out before taking the lock (it may consult the
     // rate limiter), then re-checked against the fresh state inside it.
     const snapshot = await readElection();
+    const session = request.headers.get('x-session');
+    if (!inSession(snapshot, session)) throw notInvited();
     const voter = await identify(request, snapshot);
 
     const { election, result: nominee } = await updateElection((draft) => {
+      if (!inSession(draft, session)) throw notInvited();
       if (draft.mode !== snapshot.mode) {
         throw new HttpError(409, 'The voting rules just changed — reload the page');
       }
