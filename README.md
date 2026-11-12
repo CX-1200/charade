@@ -3,13 +3,15 @@
 Live voting for **Best Dress — King** and **Best Dress — Queen**. Guests scan a QR code, tap their pick, and the big screen updates as the votes come in.
 
 - **Vote** (`/`) — the page a phone opens after scanning. Shows the vote that is open, one tap + confirm to vote, then "You voted for …". No counts here, so nobody follows the crowd.
-- **Live** (`/live`) — for the big screen: the QR code to vote and every nominee's count, updating every 2 s. The leader of the vote in focus is the only thing in colour; when a vote closes, its winner is announced. Has a Full screen button.
-- **Manage** (`/manage`, admin password) — event title, the two nominee lists, open / close / reopen each vote, reset votes, voting rules, and voting passes.
+- **Live** (`/live`) — for the big screen: the QR code to vote and every nominee's count, updating every 2 s. It shows **King**, **Queen**, or **King & Queen** together (the finale); the admin picks which from Manage ("Follow the vote" shows whichever is open). When a vote closes, its winner is announced. Has a Full screen button.
+- **Manage** (admin only) — event title, what the Live screen shows, the two nominee lists (edit, ✕ remove, **Clear list**), open / close / reopen each vote, reset one vote or **Reset all voting**, voting rules, and voting passes. Every destructive action asks for confirmation first.
+
+  Guests only see **Vote** and **Live**. The way in is the faint lock at the far right of the top bar: tap it and enter the admin password, and the Manage tab appears. Hiding the tab is a courtesy, not the protection — every admin request is still checked against a password-issued token on the server.
 - **Passes** (`/passes`, admin) — a printable sheet of personal voting passes, cut along the dashed lines.
 
 ## Running an event
 
-1. Open **Manage** and enter the admin password.
+1. Tap the faint lock at the top right, enter the admin password, and open **Manage**.
 2. Paste the nominees for King and for Queen — one per line, with an optional note after a `|` (e.g. `Alex Tan | Table 4`).
 3. Pick the **voting rules** (below). For passes: make one per guest, then **Print passes**.
 4. Put **Live** on the big screen.

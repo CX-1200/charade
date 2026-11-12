@@ -35,6 +35,10 @@ function safe<T>(fn: () => T, fallback: T): T {
 
 type AdminToken = { token: string; expiresAt: number };
 
+/** Fired in this tab when the admin token changes (the `storage` event covers other tabs). */
+export const ADMIN_EVENT = 'bestdress:admin-change';
+const announce = () => safe(() => window.dispatchEvent(new Event(ADMIN_EVENT)), undefined);
+
 export const session = {
   /** Returns the stored admin token, dropping it once it has expired. */
   getAdminToken: (): string | null =>
@@ -46,9 +50,14 @@ export const session = {
       }
       return parsed.token;
     }, null),
-  setAdminToken: (value: AdminToken) =>
-    safe(() => localStorage.setItem(ADMIN_KEY, JSON.stringify(value)), undefined),
-  clearAdminToken: () => safe(() => localStorage.removeItem(ADMIN_KEY), undefined),
+  setAdminToken: (value: AdminToken) => {
+    safe(() => localStorage.setItem(ADMIN_KEY, JSON.stringify(value)), undefined);
+    announce();
+  },
+  clearAdminToken: () => {
+    safe(() => localStorage.removeItem(ADMIN_KEY), undefined);
+    announce();
+  },
 
   /** The second copy of the device id (the first is an httpOnly cookie). */
   getDevice: () => safe(() => localStorage.getItem(DEVICE_KEY), null),

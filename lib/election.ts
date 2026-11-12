@@ -28,6 +28,7 @@ function freshElection(): Election {
   return {
     title: 'Best Dress Awards',
     mode: 'device',
+    display: 'auto',
     polls: { king: newPoll('king'), queen: newPoll('queen') },
     tickets: {},
     updatedAt: Date.now(),
@@ -162,6 +163,30 @@ export function resetVotes(election: Election, pollId: PollId): void {
   for (const voter of Object.keys(poll.ballots)) releaseTicket(election, voter, pollId);
   poll.ballots = {};
   poll.tally = {};
+}
+
+/** Empties a poll's nominee list (and with it every vote), back to "not open yet". */
+export function clearNominees(election: Election, pollId: PollId): number {
+  const poll = election.polls[pollId];
+  const removed = poll.nominees.length;
+  resetVotes(election, pollId);
+  poll.nominees = [];
+  poll.status = 'draft';
+  poll.openedAt = null;
+  poll.closedAt = null;
+  return removed;
+}
+
+/** Deletes every vote in both polls and puts both back to "not open yet". Lists stay. */
+export function resetAllVoting(election: Election): void {
+  for (const id of POLL_IDS) {
+    const poll = election.polls[id];
+    resetVotes(election, id);
+    poll.status = 'draft';
+    poll.openedAt = null;
+    poll.closedAt = null;
+  }
+  election.display = 'auto';
 }
 
 function releaseTicket(election: Election, voterKey: string, pollId: PollId): void {

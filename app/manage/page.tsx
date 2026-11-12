@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AdminUnlock, useAdmin } from '@/components/AdminUnlock';
+import { useRouter } from 'next/navigation';
+import { useAdmin } from '@/components/AdminUnlock';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { TopBar } from '@/components/TopBar';
 import { adminHeaders, api, post, session } from '@/lib/client';
-import type { PollId, VoteMode } from '@/lib/types';
+import type { LiveDisplay, PollId, VoteMode } from '@/lib/types';
 import type { AdminView } from '@/lib/view';
 
 type Response = AdminView & { message?: string | null };
@@ -18,6 +19,12 @@ export default function ManagePage() {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const router = useRouter();
+
+  // Guests never see this page: without a token it quietly goes back to Vote.
+  useEffect(() => {
+    if (admin === false) router.replace('/');
+  }, [admin, router]);
 
   const load = useCallback(async () => {
     try {
@@ -69,22 +76,7 @@ export default function ManagePage() {
     </button>
   );
 
-  if (admin === null) return <TopBar />;
-  if (!admin) {
-    return (
-      <>
-        <TopBar />
-        <main className="page">
-          <p className="eyebrow">Manage</p>
-          <h1>Admin only</h1>
-          <p className="status-line" style={{ marginBottom: 20 }}>
-            Enter the admin password to set up the nominees and run the vote.
-          </p>
-          <AdminUnlock onUnlocked={() => setAdmin(true)} />
-        </main>
-      </>
-    );
-  }
+  if (!admin) return <TopBar />;
 
   return (
     <>
@@ -110,11 +102,14 @@ export default function ManagePage() {
               />
             </div>
 
+            <DisplaySection view={view} busy={busy} act={act} />
+
             {view.polls.map((poll) => (
               <PollSection key={poll.id} poll={poll} busy={busy} act={act} />
             ))}
 
             <RulesSection view={view} busy={busy} act={act} />
+            <ResetAllSection view={view} busy={busy} act={act} />
           </>
         )}
       </main>
@@ -216,6 +211,18 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
     if (ok) await act({ action: 'resetVotes', poll: pollId });
   };
 
+  const clearList = async () => {
+    const ok = await confirm({
+      danger: true,
+      title: `Clear the ${poll.title} list?`,
+      message: `All ${poll.nominees.length} ${poll.nominees.length === 1 ? 'nominee is' : 'nominees are'} removed${
+        poll.total ? `, with all ${poll.total} ${poll.total === 1 ? 'vote' : 'votes'}` : ''
+      }, and this vote goes back to "not open yet". This cannot be undone.`,
+      confirmLabel: 'Clear list',
+    });
+    if (ok) await act({ action: 'clearNominees', poll: pollId });
+  };
+
   const setStatus = async (status: 'open' | 'closed') => {
     if (status === 'closed') {
       const ok = await confirm({
@@ -283,6 +290,13 @@ function PollSection({ poll, busy, act }: { poll: PollView; busy: boolean; act: 
         ))}
         {!poll.nominees.length && <p className="muted">No nominees yet.</p>}
       </div>
+      {poll.nominees.length > 0 && (
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+          <button className="btn link" disabled={busy} onClick={clearList}>
+            Clear list
+          </button>
+        </div>
+      )}
 
       <label style={{ display: 'block', marginTop: 18 }}>
         <span className="eyebrow">Add nominees — one per line, optional note after a |</span>
@@ -487,6 +501,66 @@ function RulesSection({ view, busy, act }: { view: AdminView; busy: boolean; act
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+const DISPLAYS: Array<{ id: LiveDisplay; label: string }> = [
+  { id: 'auto', label: 'Follow the vote' },
+  { id: 'king', label: 'King' },
+  { id: 'queen', label: 'Queen' },
+  { id: 'both', label: 'King & Queen' },
+];
+
+/** Drives what the big screen shows, from the admin's phone. */
+function DisplaySection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
+  return (
+    <section className="section" style={{ marginTop: 18 }}>
+      <h2>Live screen</h2>
+      <p className="muted" style={{ margin: '6px 0 14px' }}>
+        What every open Live dashboard shows. &ldquo;Follow the vote&rdquo; shows whichever vote is
+        open; finish with King &amp; Queen to reveal both winners together.
+      </p>
+      <div className="segmented" role="radiogroup" aria-label="Live screen shows">
+        {DISPLAYS.map((d) => (
+          <button
+            key={d.id}
+            role="radio"
+            aria-checked={view.display === d.id}
+            className={view.display === d.id ? 'on' : undefined}
+            disabled={busy}
+            onClick={() => act({ action: 'setDisplay', display: d.id })}
+          >
+            {d.label}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ResetAllSection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
+  const confirm = useConfirm();
+  const total = view.polls.reduce((sum, p) => sum + p.total, 0);
+  const touched = view.polls.some((p) => p.status !== 'draft');
+  const reset = async () => {
+    const ok = await confirm({
+      danger: true,
+      title: 'Reset all voting?',
+      message: `All ${total} ${total === 1 ? 'vote' : 'votes'} for King and Queen are deleted, both votes go back to "not open yet", and everyone can vote again. The nominee lists stay. This cannot be undone.`,
+      confirmLabel: 'Reset all voting',
+    });
+    if (ok) await act({ action: 'resetAll' });
+  };
+  return (
+    <section className="section danger-zone" style={{ marginTop: 18 }}>
+      <h2>Reset voting</h2>
+      <p className="muted" style={{ margin: '6px 0 14px' }}>
+        Start over with the same nominees: clears every vote in both King and Queen.
+      </p>
+      <button className="btn danger-solid" disabled={busy || (!total && !touched)} onClick={reset}>
+        Reset all voting
+      </button>
     </section>
   );
 }

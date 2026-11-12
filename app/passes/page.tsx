@@ -30,9 +30,7 @@ export default function PassesPage() {
         <TopBar />
         <main className="page">
           <h1>Admin only</h1>
-          <p className="status-line">
-            <Link href="/manage">Unlock Manage</Link> first.
-          </p>
+          <p className="status-line">Unlock with the admin password first.</p>
         </main>
       </>
     );

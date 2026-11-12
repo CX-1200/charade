@@ -39,8 +39,13 @@ export type Ticket = {
   used: Partial<Record<PollId, number>>;
 };
 
+/** What the live dashboard shows: one vote at a time, or both winners together. */
+export type LiveDisplay = 'auto' | PollId | 'both';
+
 export type Election = {
   title: string;
+  /** Older stored elections have no value here; read it as 'auto'. */
+  display?: LiveDisplay;
   mode: VoteMode;
   polls: Record<PollId, Poll>;
   tickets: Record<string, Ticket>;

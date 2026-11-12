@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { post, session } from '@/lib/client';
+import { ADMIN_EVENT, post, session } from '@/lib/client';
 
 type UnlockResponse = { token: string; expiresAt: number };
 
@@ -12,7 +12,11 @@ export function useAdmin() {
     const sync = () => setAdmin(!!session.getAdminToken());
     sync();
     window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
+    window.addEventListener(ADMIN_EVENT, sync);
+    return () => {
+      window.removeEventListener('storage', sync);
+      window.removeEventListener(ADMIN_EVENT, sync);
+    };
   }, []);
   return [admin, setAdmin] as const;
 }

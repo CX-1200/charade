@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/admin';
 import {
   addNominees,
   clean,
+  clearNominees,
   findNominee,
   hasVotes,
   isPollId,
@@ -10,6 +11,7 @@ import {
   newTicketCode,
   readElection,
   removeNominee,
+  resetAllVoting,
   resetVotes,
   updateElection,
 } from '@/lib/election';
@@ -88,6 +90,23 @@ function apply(election: Election, body: Record<string, unknown>): string | null
       poll.openedAt = poll.status === 'open' ? Date.now() : null;
       poll.closedAt = null;
       return 'Votes cleared';
+    }
+    case 'clearNominees': {
+      const removed = clearNominees(election, pollOf(body));
+      return removed
+        ? `Cleared ${removed} ${removed === 1 ? 'nominee' : 'nominees'}`
+        : 'The list was already empty';
+    }
+    case 'resetAll': {
+      resetAllVoting(election);
+      return 'All votes cleared — both votes are back to "not open yet"';
+    }
+    case 'setDisplay': {
+      const display = body.display;
+      if (display !== 'auto' && display !== 'both' && !isPollId(display))
+        throw new HttpError(400, 'Unknown display');
+      election.display = display;
+      return null;
     }
     case 'setMode': {
       if (body.mode !== 'device' && body.mode !== 'ticket')

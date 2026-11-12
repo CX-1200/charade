@@ -7,17 +7,41 @@ import { useLiveState, type StateResponse } from '@/components/useLiveState';
 
 type PollView = StateResponse['polls'][number];
 
+type View = 'king' | 'queen' | 'both';
+const VIEWS: Array<{ id: View; label: string }> = [
+  { id: 'king', label: 'King' },
+  { id: 'queen', label: 'Queen' },
+  { id: 'both', label: 'King & Queen' },
+];
+
 /**
- * The big-screen dashboard: the QR code to vote, and every nominee's count,
- * updating live. Only the poll in focus gets the accent colour — on its
- * leader — so the room's eye goes to one place.
+ * The big-screen dashboard. It shows one vote at a time — King, then Queen —
+ * and finally King & Queen together for the reveal. The admin drives which
+ * from Manage; anyone at a screen can also tap the view row to look at another,
+ * until the admin changes it again.
  */
 export default function LivePage() {
   const { state, error } = useLiveState(2000);
   const [origin, setOrigin] = useState('');
   useEffect(() => setOrigin(window.location.origin), []);
 
-  const focusId = useMemo(() => (state ? focusPoll(state.polls)?.id : undefined), [state]);
+  const driven = useMemo<View | undefined>(() => (state ? viewFor(state) : undefined), [state]);
+  const [picked, setPicked] = useState<View | null>(null);
+  // A new choice from the admin wins over a local tap.
+  const serverDisplay = state?.display;
+  useEffect(() => setPicked(null), [serverDisplay]);
+  const view = picked ?? driven ?? 'king';
+
+  const qr = state && (
+    <aside className="qr-panel">
+      {origin && <Qr value={`${origin}/`} size={280} label="QR code to open the voting page" />}
+      <p className="cta">{state.mode === 'ticket' ? 'Scan the QR on your pass' : 'Scan to vote'}</p>
+      <p className="url">{origin.replace(/^https?:\/\//, '')}</p>
+      <p className="muted" style={{ fontSize: 13 }}>
+        {state.mode === 'ticket' ? 'One vote per personal voting pass.' : 'One vote per phone.'}
+      </p>
+    </aside>
+  );
 
   return (
     <>
@@ -31,31 +55,39 @@ export default function LivePage() {
           )
         ) : (
           <>
-            <h1>{state.title}</h1>
-            <p className="status-line">{statusLine(state.polls)}</p>
+            <div className="live-head">
+              <div>
+                <h1>{state.title}</h1>
+                <p className="status-line">{statusLine(state.polls)}</p>
+              </div>
+              <nav className="view-tabs" aria-label="Show">
+                {VIEWS.map((v) => (
+                  <button
+                    key={v.id}
+                    className={view === v.id ? 'on' : undefined}
+                    aria-pressed={view === v.id}
+                    onClick={() => setPicked(v.id)}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
             {error && <div className="err">{error}</div>}
             <hr className="rule" />
-            <div className="board">
-              <aside className="qr-panel">
-                {origin && (
-                  <Qr value={`${origin}/`} size={280} label="QR code to open the voting page" />
-                )}
-                <p className="cta">
-                  {state.mode === 'ticket' ? 'Scan the QR on your pass' : 'Scan to vote'}
-                </p>
-                <p className="url">{origin.replace(/^https?:\/\//, '')}</p>
-                <p className="muted" style={{ fontSize: 13 }}>
-                  {state.mode === 'ticket'
-                    ? 'One vote per personal voting pass.'
-                    : 'One vote per phone.'}
-                </p>
-              </aside>
-              <div className="charts">
-                {state.polls.map((poll) => (
-                  <PollChart key={poll.id} poll={poll} focused={poll.id === focusId} />
-                ))}
+            {view === 'both' ? (
+              <BothView
+                polls={state.polls}
+                qr={state.polls.some((p) => p.status === 'open') && qr}
+              />
+            ) : (
+              <div className="board">
+                {qr}
+                <div className="charts">
+                  <PollChart poll={state.polls.find((p) => p.id === view)!} focused />
+                </div>
               </div>
-            </div>
+            )}
           </>
         )}
       </main>
@@ -63,12 +95,31 @@ export default function LivePage() {
   );
 }
 
-/** Open vote first (the latest opened if both are); otherwise the latest closed. */
-function focusPoll(polls: PollView[]): PollView | undefined {
-  const open = polls.filter((p) => p.status === 'open');
-  if (open.length) return open.sort((a, b) => (b.openedAt ?? 0) - (a.openedAt ?? 0))[0];
-  const closed = polls.filter((p) => p.status === 'closed');
-  return closed.sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))[0];
+/** What the admin asked for; "auto" follows the open vote, and both once both are closed. */
+function viewFor(state: StateResponse): View {
+  if (state.display !== 'auto') return state.display;
+  const open = state.polls.filter((p) => p.status === 'open');
+  if (open.length === 1) return open[0].id;
+  if (open.length > 1) return 'both';
+  if (state.polls.every((p) => p.status === 'closed')) return 'both';
+  const closed = state.polls
+    .filter((p) => p.status === 'closed')
+    .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+  return closed[0]?.id ?? 'king';
+}
+
+/** The finale: both winners side by side, each over its own chart. */
+function BothView({ polls, qr }: { polls: PollView[]; qr: React.ReactNode }) {
+  return (
+    <>
+      {qr && <div className="both-qr">{qr}</div>}
+      <div className="both">
+        {polls.map((poll) => (
+          <PollChart key={poll.id} poll={poll} focused compact />
+        ))}
+      </div>
+    </>
+  );
 }
 
 function statusLine(polls: PollView[]): string {
@@ -81,7 +132,15 @@ function statusLine(polls: PollView[]): string {
     .join('   ·   ');
 }
 
-function PollChart({ poll, focused }: { poll: PollView; focused: boolean }) {
+function PollChart({
+  poll,
+  focused,
+  compact = false,
+}: {
+  poll: PollView;
+  focused: boolean;
+  compact?: boolean;
+}) {
   const rows = poll.nominees
     .map((n) => ({ ...n, votes: poll.tally[n.id] ?? 0 }))
     .sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name));
@@ -91,7 +150,7 @@ function PollChart({ poll, focused }: { poll: PollView; focused: boolean }) {
   const closed = poll.status === 'closed';
 
   return (
-    <section aria-label={poll.title}>
+    <section aria-label={poll.title} className={compact ? 'chart compact' : 'chart'}>
       <div className="chart-head">
         <div>
           <p className="eyebrow" style={{ margin: 0 }}>
@@ -106,7 +165,7 @@ function PollChart({ poll, focused }: { poll: PollView; focused: boolean }) {
       </div>
 
       {closed && leaders.length > 0 && (
-        <p className="winner">
+        <p className={compact ? 'winner big' : 'winner'}>
           <span className="label">{leaders.length > 1 ? 'Tie' : 'Winner'}</span>
           {leaders.map((l) => l.name).join(' & ')}
         </p>
