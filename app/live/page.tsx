@@ -25,6 +25,7 @@ export default function LivePage() {
     <>
       <TopBar actions={<FullscreenButton />} />
       <main className="page wide live">
+        {shown && <Backdrop word={WATERMARK[shown]} />}
         {!state || !shown ? (
           error ? (
             <div className="err">{error}</div>
@@ -83,24 +84,167 @@ function Scene({ stage, state, origin }: { stage: Stage; state: StateResponse; o
   }
 }
 
+/* ---------------------------------------------------------- ornaments */
+
+const WATERMARK: Record<Stage, string> = {
+  welcome: 'Best Dress',
+  'king-voting': 'King',
+  'king-result': 'King',
+  'queen-voting': 'Queen',
+  'queen-result': 'Queen',
+  finale: 'Best Dress',
+};
+
+/**
+ * Behind every scene: two soft glows that drift very slowly, and the scene's
+ * word set huge in outline. Enough texture that the screen never looks blank,
+ * quiet enough that the names and bars stay the subject.
+ */
+function Backdrop({ word }: { word: string }) {
+  return (
+    <div className="backdrop" aria-hidden="true">
+      <span className="glow one" />
+      <span className="glow two" />
+      <span className="watermark" key={word}>
+        {word}
+      </span>
+    </div>
+  );
+}
+
+function Crown({ size = 44, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      className={`crown ${className}`}
+      width={size}
+      height={size * 0.72}
+      viewBox="0 0 50 36"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 30 L2 8 L14 18 L25 3 L36 18 L48 8 L46 30 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+      <circle cx="2" cy="8" r="2.4" fill="currentColor" />
+      <circle cx="25" cy="3" r="2.4" fill="currentColor" />
+      <circle cx="48" cy="8" r="2.4" fill="currentColor" />
+      <line x1="5" y1="33.5" x2="45" y2="33.5" stroke="currentColor" strokeWidth="2.2" />
+    </svg>
+  );
+}
+
+/** A rule with a small diamond in the middle. */
+function Ornament({ delay = 0 }: { delay?: number }) {
+  return (
+    <div className="ornament grow" style={{ animationDelay: `${delay}s` }} aria-hidden="true">
+      <span />
+      <i />
+      <span />
+    </div>
+  );
+}
+
+const CONFETTI = ['#de2c00', '#2d1947', '#c7becc', '#e0dace', '#de2c00', '#8c7f9c'];
+
+/** One burst of paper confetti, falling once, timed to a reveal. */
+function Confetti({ delay, count = 70 }: { delay: number; count?: number }) {
+  const [pieces] = useState(() =>
+    Array.from({ length: count }, (_, i) => ({
+      left: Math.random() * 100,
+      drift: (Math.random() - 0.5) * 220,
+      spin: (Math.random() - 0.5) * 1080,
+      wait: delay + Math.random() * 0.7,
+      fall: 2.6 + Math.random() * 2.2,
+      w: 6 + Math.random() * 6,
+      h: 10 + Math.random() * 8,
+      color: CONFETTI[i % CONFETTI.length],
+    })),
+  );
+  return (
+    <div className="confetti" aria-hidden="true">
+      {pieces.map((p, i) => (
+        <i
+          key={i}
+          style={
+            {
+              left: `${p.left}%`,
+              width: p.w,
+              height: p.h,
+              background: p.color,
+              animationDelay: `${p.wait}s`,
+              animationDuration: `${p.fall}s`,
+              '--drift': `${p.drift}px`,
+              '--spin': `${p.spin}deg`,
+            } as React.CSSProperties
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return (
+    (parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')
+  ).toUpperCase();
+}
+
 /* -------------------------------------------------------------- scenes */
 
 function Welcome({ state }: { state: StateResponse }) {
   return (
     <div className="hero">
-      <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
+      <div className="rise" style={{ animationDelay: '0.05s' }}>
+        <Crown size={64} className="float" />
+      </div>
+      <p className="eyebrow rise" style={{ animationDelay: '0.15s' }}>
         Tonight
       </p>
-      <h1 className="rise" style={{ animationDelay: '0.25s' }}>
+      <h1 className="rise" style={{ animationDelay: '0.3s' }}>
         {state.title}
       </h1>
-      <div className="hero-rule grow" style={{ animationDelay: '0.5s' }} />
-      <p className="hero-sub rise" style={{ animationDelay: '0.7s' }}>
+      <Ornament delay={0.55} />
+      <p className="hero-sub rise" style={{ animationDelay: '0.75s' }}>
         Best Dress — King &amp; Queen
       </p>
       <p className="muted rise" style={{ animationDelay: '0.9s' }}>
         Voting opens soon.
       </p>
+      <Nominees state={state} />
+    </div>
+  );
+}
+
+/** Tonight's nominees, gliding past along the bottom of the welcome screen. */
+function Nominees({ state }: { state: StateResponse }) {
+  const names = state.polls.flatMap((p) =>
+    p.nominees.map((n) => ({ id: n.id, name: n.name, role: p.id === 'king' ? 'King' : 'Queen' })),
+  );
+  if (names.length < 2) return null;
+  const run = names.map((n) => (
+    <span key={n.id} className="ticker-item">
+      {n.name}
+      <small>{n.role}</small>
+    </span>
+  ));
+  return (
+    <div className="ticker rise" style={{ animationDelay: '1.2s' }} aria-label="Nominees">
+      <p className="eyebrow">The nominees</p>
+      <div className="ticker-window">
+        <div
+          className="ticker-track"
+          style={{ animationDuration: `${Math.max(24, names.length * 4)}s` }}
+        >
+          {run}
+          <span aria-hidden="true" style={{ display: 'contents' }}>
+            {run}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -124,13 +268,13 @@ function Voting({ poll, state, origin }: { poll: PollView; state: StateResponse;
       </div>
       <hr className="rule" />
       <div className="board">
-        <aside className="qr-panel rise" style={{ animationDelay: '0.15s' }}>
+        <aside className="qr-panel qr-card rise" style={{ animationDelay: '0.15s' }}>
           {origin && <Qr value={`${origin}/`} size={280} label="QR code to open the voting page" />}
           <p className="cta">
             {state.mode === 'ticket' ? 'Scan the QR on your pass' : 'Scan to vote'}
           </p>
           <p className="url">{origin.replace(/^https?:\/\//, '')}</p>
-          <p className="muted" style={{ fontSize: 13 }}>
+          <p className="qr-note">
             {state.mode === 'ticket' ? 'One vote per personal voting pass.' : 'One vote per phone.'}
           </p>
         </aside>
@@ -149,6 +293,7 @@ function Result({ poll }: { poll: PollView }) {
   const revealAt = 0.6 + rows.length * 0.22 + 0.9;
   return (
     <div className="result">
+      {winners.length > 0 && <Confetti delay={revealAt + 0.2} />}
       <div className="scene-head rise">
         <div>
           <p className="eyebrow">Result</p>
@@ -163,7 +308,10 @@ function Result({ poll }: { poll: PollView }) {
       <div className="reveal" style={{ animationDelay: `${revealAt}s` }}>
         {winners.length ? (
           <>
-            <span className="label">{winners.length > 1 ? 'It’s a tie' : 'Winner'}</span>
+            <span className="label">
+              <Crown size={30} />
+              {winners.length > 1 ? 'It’s a tie' : 'Winner'}
+            </span>
             <span className="name">{winners.map((w) => w.name).join(' & ')}</span>
           </>
         ) : (
@@ -178,13 +326,15 @@ function Result({ poll }: { poll: PollView }) {
 function Finale({ state, king, queen }: { state: StateResponse; king: PollView; queen: PollView }) {
   return (
     <div className="finale">
+      <Confetti delay={1.1} count={60} />
+      <Confetti delay={1.9} count={60} />
       <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
         {state.title}
       </p>
       <h1 className="rise" style={{ animationDelay: '0.25s' }}>
         Best Dress
       </h1>
-      <div className="hero-rule grow" style={{ animationDelay: '0.5s' }} />
+      <Ornament delay={0.5} />
       <div className="crowns">
         <Crowned poll={king} role="King" delay={1.1} />
         <Crowned poll={queen} role="Queen" delay={1.9} />
@@ -198,6 +348,7 @@ function Crowned({ poll, role, delay }: { poll: PollView; role: string; delay: n
   const votes = winners[0]?.votes ?? 0;
   return (
     <section className="crowned" style={{ animationDelay: `${delay}s` }} aria-label={poll.title}>
+      <Crown size={52} />
       <p className="eyebrow">{role}</p>
       <p className="name">{winners.length ? winners.map((w) => w.name).join(' & ') : '—'}</p>
       {winners.length > 0 && (
@@ -260,9 +411,13 @@ function Bars({ poll, reveal = false }: { poll: PollView; reveal?: boolean }) {
             style={{ transform: `translateY(${index * ROW}px)`, height: ROW }}
           >
             <div className="bar-label">
-              <b>{row.name}</b>
-              {lead && !reveal && <span className="tag">Leading</span>}
-              {row.note && <small>{row.note}</small>}
+              <span className="rank">{String(index + 1).padStart(2, '0')}</span>
+              <span className={`avatar${lead ? ' lead' : ''}`}>{initials(row.name)}</span>
+              <span className="who">
+                <b>{row.name}</b>
+                {lead && !reveal && <span className="tag">Leading</span>}
+                {row.note && <small>{row.note}</small>}
+              </span>
             </div>
             <div className="bar-track">
               <div

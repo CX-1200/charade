@@ -1,16 +1,19 @@
 :root {
-  --ground: #f7f2ea;
-  --paper: #fffdf9;
-  --ink: #1f1a16;
-  --ink-soft: #3a332d;
-  --muted: #6e655b;
-  --line: rgba(31, 26, 22, 0.12);
-  --line-strong: rgba(31, 26, 22, 0.24);
-  /* One accent, used sparingly: the leading bar, the primary action. */
-  --accent: #8a1538;
-  --accent-soft: rgba(138, 21, 56, 0.08);
+  /* Palette: lilac #c7becc, aubergine #2d1947, vermilion #de2c00, stone #e0dace. */
+  --ground: #ebe7ee;
+  --paper: #f7f5f8;
+  --ink: #2d1947;
+  --ink-soft: #43305e;
+  --muted: #625775;
+  --line: rgba(45, 25, 71, 0.13);
+  --line-strong: rgba(45, 25, 71, 0.26);
+  /* One accent, used sparingly: the leader, the winner, the next step. */
+  --accent: #de2c00;
+  --accent-soft: rgba(222, 44, 0, 0.09);
   /* Every other bar: recessive, but still 3:1 against the ground. */
-  --bar-quiet: #8e8478;
+  --bar-quiet: #8c7f9c;
+  --lilac: #c7becc;
+  --stone: #e0dace;
   --serif:
     'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Noto Serif SC', 'Songti SC', serif;
   --sans:
@@ -46,13 +49,17 @@ textarea {
 
 /* ------------------------------------------------------------ top bar */
 
+/* An aubergine band: the one dark element that frames every screen. */
 .topbar {
+  background: var(--ink);
+  color: var(--stone);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 16px;
   padding: 18px 28px;
-  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 2;
 }
 .brand {
   font-family: var(--serif);
@@ -60,11 +67,12 @@ textarea {
   font-weight: 600;
   letter-spacing: -0.2px;
   text-decoration: none;
+  color: #fff;
 }
 .brand small {
   font-family: var(--sans);
   font-size: 12px;
-  color: var(--muted);
+  color: var(--lilac);
   font-weight: 500;
   margin-left: 8px;
   letter-spacing: 0.4px;
@@ -77,17 +85,17 @@ textarea {
 }
 .tabs a {
   text-decoration: none;
-  color: var(--muted);
+  color: var(--lilac);
   font-size: 15px;
   padding: 6px 0;
   border-bottom: 1.5px solid transparent;
 }
 .tabs a:hover {
-  color: var(--ink);
+  color: #fff;
 }
 .tabs a.on {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+  color: #fff;
+  border-bottom-color: var(--accent);
 }
 .top-actions {
   display: flex;
@@ -95,7 +103,15 @@ textarea {
   align-items: center;
   gap: 10px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--lilac);
+}
+.topbar .btn {
+  background: transparent;
+  color: var(--stone);
+  border-color: rgba(224, 218, 206, 0.4);
+}
+.topbar .btn:hover:not(:disabled) {
+  border-color: var(--stone);
 }
 @media (max-width: 640px) {
   .topbar {
@@ -608,7 +624,7 @@ textarea {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgba(31, 26, 22, 0.5);
+  background: rgba(25, 12, 42, 0.55);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
   animation: fade-in 0.15s ease-out;
@@ -618,7 +634,7 @@ textarea {
   padding: 28px 24px 22px;
   border-radius: 20px;
   background: var(--paper);
-  box-shadow: 0 24px 60px rgba(31, 26, 22, 0.3);
+  box-shadow: 0 24px 60px rgba(45, 25, 71, 0.3);
   text-align: center;
   animation: pop 0.22s ease-out;
 }
@@ -691,8 +707,8 @@ textarea {
   padding: 0;
   border: none;
   background: none;
-  color: var(--ink);
-  opacity: 0.12;
+  color: var(--stone);
+  opacity: 0.16;
   cursor: pointer;
   border-radius: 6px;
 }
@@ -708,7 +724,16 @@ textarea {
 /* ------------------------------------------------------ live scenes */
 
 .live {
-  min-height: calc(100dvh - 80px);
+  min-height: calc(100dvh - 72px);
+  position: relative;
+}
+/* The live page stretches its ground edge to edge, under the decoration. */
+body:has(.live) {
+  overflow-x: hidden;
+}
+.scene {
+  position: relative;
+  z-index: 1;
 }
 .scene {
   animation: scene-in 0.6s ease-out both;
@@ -799,12 +824,6 @@ textarea {
   font-size: clamp(44px, 7vw, 104px);
   line-height: 1.02;
 }
-.hero-rule {
-  width: 96px;
-  height: 2px;
-  background: var(--accent);
-  margin: 26px auto;
-}
 .hero-sub {
   font-family: var(--serif);
   font-size: clamp(22px, 2.6vw, 34px);
@@ -820,7 +839,7 @@ textarea {
   position: absolute;
   inset: 0 0 auto 0;
   display: grid;
-  grid-template-columns: minmax(130px, 34%) 1fr;
+  grid-template-columns: minmax(240px, 36%) 1fr;
   column-gap: 18px;
   align-items: center;
   transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -970,4 +989,250 @@ textarea {
 .btn.big {
   padding: 14px 24px;
   font-size: 16px;
+}
+
+/* ----------------------------------------------------- live ornaments */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  animation: drift 38s ease-in-out infinite alternate;
+}
+.glow.one {
+  width: 60vw;
+  height: 60vw;
+  left: -18vw;
+  top: -14vw;
+  background: rgba(199, 190, 204, 0.85);
+}
+.glow.two {
+  width: 46vw;
+  height: 46vw;
+  right: -14vw;
+  bottom: -18vw;
+  background: rgba(222, 44, 0, 0.14);
+  animation-duration: 46s;
+  animation-direction: alternate-reverse;
+}
+@keyframes drift {
+  to {
+    transform: translate(8vw, 6vh) scale(1.12);
+  }
+}
+/* The scene's word, huge and in outline only, sitting low on the right. */
+.watermark {
+  position: absolute;
+  right: -2vw;
+  bottom: -5vw;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 600;
+  font-size: 26vw;
+  line-height: 1;
+  white-space: nowrap;
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgba(45, 25, 71, 0.09);
+  animation: fade 1.6s ease-out both;
+}
+
+.crown {
+  display: inline-block;
+  color: var(--accent);
+}
+.crown.float {
+  animation: float 4.5s ease-in-out infinite;
+}
+@keyframes float {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.ornament {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 220px;
+  margin: 26px auto;
+}
+.ornament span {
+  flex: 1;
+  height: 1px;
+  background: var(--ink);
+  opacity: 0.35;
+}
+.ornament i {
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  transform: rotate(45deg);
+}
+
+/* Welcome: the nominees glide by. */
+.ticker {
+  width: min(1100px, 100%);
+  margin-top: 54px;
+}
+.ticker-window {
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: ticker linear infinite;
+}
+@keyframes ticker {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-item {
+  font-family: var(--serif);
+  font-size: 26px;
+  padding: 16px 30px;
+  white-space: nowrap;
+  border-right: 1px solid var(--line);
+}
+.ticker-item small {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-left: 10px;
+  font-weight: 700;
+}
+
+/* Voting: the QR sits in an aubergine card, the one dark block on screen. */
+.qr-card {
+  background: var(--ink);
+  color: var(--stone);
+  border-radius: 22px;
+  padding: 22px 22px 20px;
+  box-shadow: 0 24px 50px rgba(45, 25, 71, 0.22);
+}
+.qr-card img {
+  border: none;
+}
+.qr-card .cta {
+  color: #fff;
+}
+.qr-card .url {
+  color: var(--lilac);
+}
+.qr-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--lilac);
+}
+
+/* Rows: rank, initials, name. */
+.lrow .bar-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.rank {
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--muted);
+  width: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--lilac);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  transition:
+    background 0.6s,
+    color 0.6s;
+}
+.avatar.lead {
+  background: var(--ink);
+  color: #fff;
+  box-shadow:
+    0 0 0 2px var(--ground),
+    0 0 0 4px var(--accent);
+}
+.who {
+  min-width: 0;
+}
+.who b {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reveal .label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Confetti: falls once, then is gone. */
+.confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+.confetti i {
+  position: absolute;
+  top: -24px;
+  border-radius: 2px;
+  opacity: 0;
+  animation-name: confetti;
+  animation-timing-function: cubic-bezier(0.25, 0.6, 0.45, 1);
+  animation-fill-mode: both;
+}
+@keyframes confetti {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0);
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drift), 105vh) rotate(var(--spin));
+  }
+}
+.crowned {
+  background: rgba(247, 245, 248, 0.7);
+  border-radius: 0 0 20px 20px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glow,
+  .crown.float,
+  .ticker-track,
+  .watermark {
+    animation: none;
+  }
+  .confetti {
+    display: none;
+  }
 }
