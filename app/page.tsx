@@ -7,7 +7,7 @@ import { useConfirm } from '@/components/ConfirmDialog';
 import {
   Backdrop,
   Countdown,
-  Crown,
+  SwapCrown,
   Finale,
   OpenList,
   Result,
@@ -141,7 +141,7 @@ function Holding({
         <div className="scene">
           <div className="hero">
             <div className="rise">
-              <Crown size={56} className="float" />
+              <SwapCrown size={56} className="float" />
             </div>
             <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
               Best Dress

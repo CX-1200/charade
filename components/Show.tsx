@@ -63,7 +63,16 @@ export function Backdrop({ word }: { word: string }) {
   );
 }
 
-export function Crown({ size = 44, className = '' }: { size?: number; className?: string }) {
+export function Crown({
+  size = 44,
+  className = '',
+  kind = 'king',
+}: {
+  size?: number;
+  className?: string;
+  kind?: 'king' | 'queen';
+}) {
+  if (kind === 'queen') return <Tiara size={size} className={className} />;
   return (
     <svg
       className={`crown ${className}`}
@@ -84,6 +93,53 @@ export function Crown({ size = 44, className = '' }: { size?: number; className?
       <circle cx="48" cy="8" r="2.4" fill="currentColor" />
       <line x1="5" y1="33.5" x2="45" y2="33.5" stroke="currentColor" strokeWidth="2.2" />
     </svg>
+  );
+}
+
+/** The Queen's crown: a tiara with a tall centre point and a gem. */
+function Tiara({ size, className }: { size: number; className: string }) {
+  return (
+    <svg
+      className={`crown ${className}`}
+      width={size}
+      height={size * 0.72}
+      viewBox="0 0 50 36"
+      aria-hidden="true"
+    >
+      <path
+        d="M3 31 L5 21 Q10 23 13 15 Q17 19 20 11 Q22 9 25 4 Q28 9 30 11 Q33 19 37 15 Q40 23 45 21 L47 31 Q25 25 3 31 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+      <path d="M25 12 L28 17 L25 22 L22 17 Z" fill="currentColor" />
+      <circle cx="25" cy="4" r="2.2" fill="currentColor" />
+      <circle cx="13" cy="15" r="1.8" fill="currentColor" />
+      <circle cx="37" cy="15" r="1.8" fill="currentColor" />
+      <circle cx="5" cy="21" r="1.6" fill="currentColor" />
+      <circle cx="45" cy="21" r="1.6" fill="currentColor" />
+      <path d="M5 34.5 Q25 29 45 34.5" fill="none" stroke="currentColor" strokeWidth="2.2" />
+    </svg>
+  );
+}
+
+/** The King's crown and the Queen's tiara, taking turns every two seconds. */
+export function SwapCrown({ size = 44, className = '' }: { size?: number; className?: string }) {
+  const [queen, setQueen] = useState(false);
+  useEffect(() => {
+    const timer = setInterval(() => setQueen((q) => !q), 2000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <span className={`swap-crown ${className}`} aria-hidden="true">
+      <span className={queen ? undefined : 'on'}>
+        <Crown size={size} />
+      </span>
+      <span className={queen ? 'on' : undefined}>
+        <Crown size={size} kind="queen" />
+      </span>
+    </span>
   );
 }
 
@@ -146,11 +202,12 @@ export function initials(name: string): string {
 
 /* -------------------------------------------------------------- scenes */
 
-export function Welcome({ state }: { state: ShowState }) {
+/** `join` is the Live screen's QR code, set in the middle while the site is on. */
+export function Welcome({ state, join }: { state: ShowState; join?: React.ReactNode }) {
   return (
-    <div className="hero">
+    <div className="hero welcome">
       <div className="rise" style={{ animationDelay: '0.05s' }}>
-        <Crown size={64} className="float" />
+        <SwapCrown size={64} className="float" />
       </div>
       <p className="eyebrow rise" style={{ animationDelay: '0.15s' }}>
         Tonight
@@ -162,9 +219,11 @@ export function Welcome({ state }: { state: ShowState }) {
       <p className="hero-sub rise" style={{ animationDelay: '0.75s' }}>
         Best Dress — King &amp; Queen
       </p>
-      <p className="muted rise" style={{ animationDelay: '0.9s' }}>
-        Voting opens soon.
-      </p>
+      {join && (
+        <div className="rise welcome-join" style={{ animationDelay: '0.9s' }}>
+          {join}
+        </div>
+      )}
       <Nominees state={state} />
     </div>
   );
@@ -223,7 +282,7 @@ export function Result({ poll }: { poll: PollView }) {
         {winners.length ? (
           <>
             <span className="label">
-              <Crown size={30} />
+              <Crown size={30} kind={poll.id === 'queen' ? 'queen' : 'king'} />
               {winners.length > 1 ? 'It’s a tie' : 'Winner'}
             </span>
             <span className="name">{winners.map((w) => w.name).join(' & ')}</span>
@@ -259,18 +318,28 @@ export function Finale({
       <Ornament delay={0.5} />
       <div className="crowns">
         <Crowned poll={king} role="King" delay={1.1} />
-        <Crowned poll={queen} role="Queen" delay={1.9} />
+        <Crowned poll={queen} role="Queen" delay={1.9} kind="queen" />
       </div>
     </div>
   );
 }
 
-function Crowned({ poll, role, delay }: { poll: PollView; role: string; delay: number }) {
+function Crowned({
+  poll,
+  role,
+  delay,
+  kind = 'king',
+}: {
+  poll: PollView;
+  role: string;
+  delay: number;
+  kind?: 'king' | 'queen';
+}) {
   const winners = leadersOf(ranked(poll));
   const votes = winners[0]?.votes ?? 0;
   return (
     <section className="crowned" style={{ animationDelay: `${delay}s` }} aria-label={poll.title}>
-      <Crown size={52} />
+      <Crown size={52} kind={kind} />
       <p className="eyebrow">{role}</p>
       <p className="name">{winners.length ? winners.map((w) => w.name).join(' & ') : '—'}</p>
       {winners.length > 0 && (

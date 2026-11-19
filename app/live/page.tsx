@@ -21,8 +21,8 @@ import type { PollId, Stage } from '@/lib/types';
 /**
  * The big screen, for the admin to put on the projector. It has no controls:
  * the admin runs the show from Manage and this follows, countdown included.
- * While the site is on it shows the join QR code — in a corner card,
- * larger on the welcome screen, so late arrivals can still get in.
+ * While the site is on it shows the join QR code — in the middle of the
+ * welcome screen, then in a corner card, so late arrivals can still get in.
  */
 export default function LivePage() {
   const [admin] = useAdmin();
@@ -52,8 +52,8 @@ export default function LivePage() {
             <Scene stage={shown} state={show} skew={skew} />
           </div>
         )}
-        {show?.joinId && shown && shown !== 'finale' && (
-          <JoinQr joinId={show.joinId} size={shown === 'welcome' ? 190 : 120} corner />
+        {show?.joinId && shown && shown !== 'welcome' && shown !== 'finale' && (
+          <JoinQr joinId={show.joinId} size={120} corner />
         )}
       </main>
     </>
@@ -64,7 +64,12 @@ function Scene({ stage, state, skew }: { stage: Stage; state: ShowState; skew: n
   const poll = (id: PollId) => state.polls.find((p) => p.id === id)!;
   switch (stage) {
     case 'welcome':
-      return <Welcome state={state} />;
+      return (
+        <Welcome
+          state={state}
+          join={state.joinId ? <JoinQr joinId={state.joinId} size={200} /> : null}
+        />
+      );
     case 'king-open':
     case 'queen-open':
       return (
