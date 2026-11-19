@@ -57,6 +57,14 @@ export default function HomePage() {
     }
   }
 
+  /** Spectators need no name: they watch the room without joining it. */
+  function watchRoom() {
+    setError('');
+    const target = code.trim().toUpperCase();
+    if (target.length !== 4) return setError('A room code is 4 characters');
+    router.push(`/room/${target}?watch=1`);
+  }
+
   async function joinRoom() {
     setError('');
     const target = code.trim().toUpperCase();
@@ -181,9 +189,18 @@ export default function HomePage() {
               <button className="btn primary" onClick={joinRoom} disabled={busy !== null}>
                 {busy === 'join' ? '…' : 'Join'}
               </button>
+              <button
+                className="btn ghost"
+                onClick={watchRoom}
+                disabled={busy !== null}
+                title="Watch as a spectator"
+              >
+                👁 Watch
+              </button>
             </div>
             <p className="muted" style={{ marginTop: 8 }}>
-              Anyone with the 4-character code can play.
+              Anyone with the 4-character code can play. <b>Watch</b> to follow the live race and
+              results as a spectator, without playing — no name needed.
             </p>
           </div>
 

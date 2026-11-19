@@ -9,7 +9,9 @@ function sum(tally: Tally): number {
  * The live feed is shown on a public screen while other teams are still acting
  * out the very same questions, so the words stay hidden until the round ends.
  */
-function feedEntry(entry: LogEntry, live: boolean): LogEntry {
+function feedEntry(entry: LogEntry, live: boolean, outsider: boolean): LogEntry {
+  // Someone outside the room (a spectator) only ever learns which team scored.
+  if (outsider) return { ...entry, text: '', categoryName: '', playerName: '', playerId: '' };
   return live ? { ...entry, text: '', categoryName: '' } : entry;
 }
 
@@ -96,7 +98,7 @@ export function publicRoom(
     log: room.log
       .slice(-60)
       .reverse()
-      .map((e) => feedEntry(e, room.state === 'playing')),
+      .map((e) => feedEntry(e, room.state === 'playing', !you && !opts.admin)),
   };
 }
 

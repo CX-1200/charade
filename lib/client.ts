@@ -34,6 +34,7 @@ const ADMIN_KEY = 'charade:admin';
  * `charade:pid:` — an id alone proves nothing, so those are simply ignored.)
  */
 const seatKey = (code: string) => `charade:seat:${code.toUpperCase()}`;
+const watchKey = (code: string) => `charade:watch:${code.toUpperCase()}`;
 type Seat = { playerId: string; secret: string };
 
 function safe<T>(fn: () => T, fallback: T): T {
@@ -61,6 +62,17 @@ export const session = {
     safe(() => localStorage.setItem(seatKey(code), JSON.stringify(value)), undefined);
   },
   clearSeat: (code: string) => safe(() => localStorage.removeItem(seatKey(code)), undefined),
+  /** Watching a room as a spectator — per tab, so one screen can watch while another plays. */
+  isWatching: (code: string): boolean =>
+    safe(() => sessionStorage.getItem(watchKey(code)) === '1', false),
+  setWatching: (code: string, on: boolean) =>
+    safe(
+      () =>
+        on
+          ? sessionStorage.setItem(watchKey(code), '1')
+          : sessionStorage.removeItem(watchKey(code)),
+      undefined,
+    ),
 
   /** Returns the stored admin token, dropping it once it has expired. */
   getAdminToken: (): string | null =>

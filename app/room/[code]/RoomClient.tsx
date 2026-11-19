@@ -61,6 +61,27 @@ export default function RoomClient({ code }: { code: string }) {
   const missesRef = useRef(0);
   const [joinName, setJoinName] = useState('');
   const [needsJoin, setNeedsJoin] = useState(false);
+  /**
+   * A spectator watches without joining: no player, no team, no card — just
+   * the public view the server gives anyone, so they can't affect the game.
+   */
+  const [spectating, setSpectating] = useState(false);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('watch') === '1') {
+      session.setWatching(code, true);
+      url.searchParams.delete('watch');
+      window.history.replaceState(null, '', url.pathname + url.search);
+    }
+    setSpectating(session.isWatching(code));
+  }, [code]);
+  const watch = useCallback(
+    (on: boolean) => {
+      session.setWatching(code, on);
+      setSpectating(on);
+    },
+    [code],
+  );
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(Date.now());
   const offsetRef = useRef(0);
@@ -77,8 +98,9 @@ export default function RoomClient({ code }: { code: string }) {
 
   const refresh = useCallback(async () => {
     try {
+      // A spectator asks as nobody in particular, so it never shows as a player.
       const data = await api<RoomView>(`/api/rooms/${code}`, {
-        headers: authHeaders(code),
+        headers: session.isWatching(code) ? {} : authHeaders(code),
       });
       missesRef.current = 0;
       applyView(data);
@@ -126,7 +148,7 @@ export default function RoomClient({ code }: { code: string }) {
   }, [refresh]);
 
   const roomState = view?.room.state;
-  const watching = !!view?.you?.spectating;
+  const watching = !!view?.you?.spectating || spectating;
   useEffect(() => {
     if (closed) return;
     const delay = hidden
@@ -278,6 +300,23 @@ export default function RoomClient({ code }: { code: string }) {
     );
   }
 
+  if (spectating) {
+    return (
+      <main className="shell">
+        <Header code={code} spectator onStopWatching={() => watch(false)} />
+        {error && <div className="err">{error}</div>}
+        {room.state === 'lobby' && <SpectatorLobby view={view} />}
+        {room.state === 'playing' && (
+          <LiveDashboard view={view} remainingMs={remainingMs} startsInMs={startsInMs} />
+        )}
+        {room.state === 'finished' && <Dashboard view={view} admin={false} />}
+        <p className="muted" style={{ marginTop: 20, textAlign: 'center' }}>
+          Room {code} · 👁 Spectating · <Link href="/">Home</Link>
+        </p>
+      </main>
+    );
+  }
+
   if (needsJoin || !you) {
     return (
       <main className="shell">
@@ -301,6 +340,9 @@ export default function RoomClient({ code }: { code: string }) {
           </label>
           <button className="btn primary block" onClick={join} disabled={busy}>
             Enter room
+          </button>
+          <button className="btn ghost block" style={{ marginTop: 10 }} onClick={() => watch(true)}>
+            👁 Just watch — see the live race and results without playing
           </button>
         </div>
       </main>
@@ -422,7 +464,11 @@ function Header({
   admin,
   onLeave,
   onLeaveTeam,
+  spectator,
+  onStopWatching,
 }: {
+  spectator?: boolean;
+  onStopWatching?: () => void;
   code: string;
   you?: string;
   team?: string;
@@ -438,6 +484,12 @@ function Header({
       </div>
       <div className="row tight">
         <FullscreenButton />
+        {spectator && <span className="chip">👁 Spectator</span>}
+        {spectator && onStopWatching && (
+          <button className="btn sm ghost" onClick={onStopWatching}>
+            Join to play
+          </button>
+        )}
         {you && admin && <span className="chip on">🔓 Admin</span>}
         {you && (
           <div className="player-pill">
@@ -1208,9 +1260,7 @@ function FeedRow({ entry, view }: { entry: LogRow; view: RoomView }) {
   if (entry.result === 'skip') {
     return (
       <div className="ticker-row quiet">
-        <span>
-          {entry.playerName} ({entry.team}) skipped
-        </span>
+        <span>{entry.playerName ? `${entry.playerName} (${entry.team})` : entry.team} skipped</span>
         <span>⏭</span>
       </div>
     );
@@ -1218,7 +1268,15 @@ function FeedRow({ entry, view }: { entry: LogRow; view: RoomView }) {
   return (
     <div className="ticker-row">
       <span>
-        <b style={{ color }}>{entry.playerName}</b> scored for {entry.team}
+        {entry.playerName ? (
+          <>
+            <b style={{ color }}>{entry.playerName}</b> scored for {entry.team}
+          </>
+        ) : (
+          <>
+            <b style={{ color }}>{entry.team}</b> got one right
+          </>
+        )}
       </span>
       <span className="res correct">✓</span>
     </div>
@@ -1370,18 +1428,19 @@ function Play({
  * What a spectating admin sees while the round runs — built to be put on a big
  * screen, so it shows progress and streaks but never a question.
  */
+/** The live race. Admin controls appear only when `act` is given — never for spectators. */
 function LiveDashboard({
   view,
   remainingMs,
   startsInMs,
-  busy,
+  busy = false,
   act,
 }: {
   view: RoomView;
   remainingMs: number;
   startsInMs: number;
-  busy: boolean;
-  act: Act;
+  busy?: boolean;
+  act?: Act;
 }) {
   const { room, log, race } = view;
   const total = room.settings.durationSec * 1000;
@@ -1407,13 +1466,15 @@ function LiveDashboard({
               questions each
             </p>
           </div>
-          <button
-            className="btn sm danger"
-            disabled={busy}
-            onClick={() => act({ action: 'finish' })}
-          >
-            End now
-          </button>
+          {act && (
+            <button
+              className="btn sm danger"
+              disabled={busy}
+              onClick={() => act({ action: 'finish' })}
+            >
+              End now
+            </button>
+          )}
         </div>
         <div className="progress">
           <i style={{ width: `${pct}%` }} />
@@ -1434,7 +1495,7 @@ function LiveDashboard({
         </div>
       </div>
 
-      <ManageTeams view={view} busy={busy} act={act} />
+      {act && <ManageTeams view={view} busy={busy} act={act} />}
     </>
   );
 }
@@ -1614,13 +1675,13 @@ function Confetti() {
 function Dashboard({
   view,
   admin,
-  busy,
+  busy = false,
   act,
 }: {
   view: RoomView;
   admin: boolean;
-  busy: boolean;
-  act: Act;
+  busy?: boolean;
+  act?: Act;
 }) {
   const { room, scores, log, race } = view;
   const [tab, setTab] = useState<'round' | 'total'>('round');
@@ -1628,7 +1689,7 @@ function Dashboard({
     <>
       <WinnerHero view={view} />
       <div className="card">
-        {admin ? (
+        {admin && act ? (
           <div className="row">
             <button
               className="btn primary"
@@ -1676,8 +1737,16 @@ function Dashboard({
           {log.map((entry, index) => (
             <div key={`${entry.at}-${index}`} className="log-item">
               <span>
-                <b style={{ color: teamColor(room.teams, entry.team) }}>{entry.playerName}</b>{' '}
-                <span className="muted">[{entry.categoryName}]</span> {entry.text}
+                <b style={{ color: teamColor(room.teams, entry.team) }}>
+                  {entry.playerName || entry.team}
+                </b>{' '}
+                {entry.text ? (
+                  <>
+                    <span className="muted">[{entry.categoryName}]</span> {entry.text}
+                  </>
+                ) : (
+                  <span className="muted">{entry.playerName ? `· ${entry.team}` : ''}</span>
+                )}
               </span>
               <span className={`res ${entry.result}`}>
                 {entry.result === 'correct' ? '✓ Correct' : '⏭ Skip'}
@@ -1688,7 +1757,67 @@ function Dashboard({
         </div>
       </div>
 
-      {admin && <ManageTeams view={view} busy={busy} act={act} />}
+      {admin && act && <ManageTeams view={view} busy={busy} act={act} />}
+    </>
+  );
+}
+
+/** What a spectator sees before the round: who is here, in which team, and the standings so far. */
+function SpectatorLobby({ view }: { view: RoomView }) {
+  const { room, scores } = view;
+  const teamless = room.players.filter((p) => !p.team);
+  return (
+    <>
+      <div className="card">
+        <h1>Waiting for the round to start</h1>
+        <p className="sub">
+          You&rsquo;re watching room {room.code}. The live race appears here the moment the admin
+          starts — you don&rsquo;t need to do anything.
+        </p>
+        <div className="board">
+          {room.teams.map((team) => {
+            const members = room.players.filter((p) => p.team === team);
+            const racing = room.settings.activeTeams.includes(team);
+            return (
+              <div key={team} className="board-row">
+                <div className="rank">
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 12,
+                      height: 12,
+                      borderRadius: '50%',
+                      background: teamColor(room.teams, team),
+                    }}
+                  />
+                </div>
+                <div>
+                  <div className="team-name">{team}</div>
+                  <div className="roster">
+                    {members.map((p) => p.name).join(', ') || 'No members yet'}
+                  </div>
+                </div>
+                <div className="pts">
+                  <small>{racing ? `${members.length} playing` : 'Sitting out'}</small>
+                </div>
+              </div>
+            );
+          })}
+          {!room.teams.length && <div className="empty">No teams yet.</div>}
+        </div>
+        {teamless.length > 0 && (
+          <p className="muted" style={{ marginTop: 12 }}>
+            Still picking a team: {teamless.map((p) => p.name).join(', ')}
+          </p>
+        )}
+      </div>
+      {room.rounds > 0 && (
+        <Scoreboard
+          title={`Overall points (${room.rounds} ${room.rounds === 1 ? 'round' : 'rounds'})`}
+          scores={scores.total}
+          teams={room.teams}
+        />
+      )}
     </>
   );
 }
