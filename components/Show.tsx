@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ShowState } from '@/components/useLiveState';
 import { useRemaining } from '@/components/useLiveState';
 import type { Stage } from '@/lib/types';
@@ -229,31 +229,137 @@ export function Welcome({ state, join }: { state: ShowState; join?: React.ReactN
   );
 }
 
-/** Tonight's nominees, gliding past along the bottom of the welcome screen. */
+/** Tonight's nominees, gliding past: King's on one line, Queen's on the next. */
 function Nominees({ state }: { state: ShowState }) {
-  const names = state.polls.flatMap((p) =>
-    p.nominees.map((n) => ({ id: n.id, name: n.name, role: p.id === 'king' ? 'King' : 'Queen' })),
-  );
-  if (names.length < 2) return null;
-  const run = names.map((n) => (
-    <span key={n.id} className="ticker-item">
-      {n.name}
-      <small>{n.role}</small>
-    </span>
-  ));
+  const lines = state.polls
+    .filter((p) => p.nominees.length)
+    .map((p) => ({
+      key: p.id,
+      items: p.nominees.map((n) => ({
+        id: n.id,
+        name: n.name,
+        tag: p.id === 'king' ? 'King' : 'Queen',
+      })),
+    }));
+  if (!lines.length) return null;
   return (
     <div className="ticker rise" style={{ animationDelay: '1.2s' }} aria-label="Nominees">
       <p className="eyebrow">The nominees</p>
-      <div className="ticker-window">
-        <div
-          className="ticker-track"
-          style={{ animationDuration: `${Math.max(24, names.length * 4)}s` }}
-        >
+      {lines.map((line, i) => (
+        <Marquee key={line.key} items={line.items} reverse={i % 2 === 1} />
+      ))}
+    </div>
+  );
+}
+
+type MarqueeItem = { id: string; name: string; tag?: string };
+
+/**
+ * One line of names sliding past at a steady, readable speed — however many
+ * names there are, each takes the same time to cross the screen, so a long
+ * list just takes longer to come round rather than rushing by.
+ */
+export function Marquee({
+  items,
+  reverse = false,
+  big = false,
+  speed = 70,
+}: {
+  items: MarqueeItem[];
+  reverse?: boolean;
+  big?: boolean;
+  /** Pixels per second. */
+  speed?: number;
+}) {
+  const track = useRef<HTMLDivElement>(null);
+  const [duration, setDuration] = useState(40);
+  // A short list is repeated so one run is always wider than the screen.
+  const copies = Math.max(1, Math.ceil(8 / Math.max(1, items.length)));
+  const run = Array.from({ length: copies }, (_, c) =>
+    items.map((item) => (
+      <span key={`${c}-${item.id}`} className="ticker-item">
+        {item.name}
+        {item.tag && <small>{item.tag}</small>}
+      </span>
+    )),
+  );
+  useEffect(() => {
+    const el = track.current;
+    if (!el) return;
+    const measure = () => setDuration(Math.max(12, el.scrollWidth / 2 / speed));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [speed, items.length]);
+  return (
+    <div className={`ticker-window${big ? ' big' : ''}`}>
+      <div
+        ref={track}
+        className={`ticker-track${reverse ? ' reverse' : ''}`}
+        style={{ animationDuration: `${duration}s` }}
+      >
+        {run}
+        <span aria-hidden="true" className="ticker-copy">
           {run}
-          <span aria-hidden="true" style={{ display: 'contents' }}>
-            {run}
-          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The Live screen's "up next" for one vote: its nominees on a few sliding
+ * lines (more lines for a longer list), big enough to read across a room.
+ */
+export function OpenMarquee({
+  poll,
+  note,
+  join,
+}: {
+  poll: PollView;
+  note: string;
+  /** The join QR code, beside the heading — guests are still arriving now. */
+  join?: React.ReactNode;
+}) {
+  const n = poll.nominees.length;
+  const lineCount = n > 15 ? 4 : n > 8 ? 3 : n > 4 ? 2 : 1;
+  const lines = Array.from({ length: lineCount }, (_, line) =>
+    poll.nominees
+      .filter((_, i) => i % lineCount === line)
+      .map((nominee) => ({ id: nominee.id, name: nominee.name })),
+  );
+  return (
+    <div className="open-marquee">
+      <div className="open-head">
+        <div className="hero-mini">
+          <div className="rise">
+            <Crown size={56} kind={poll.id === 'queen' ? 'queen' : 'king'} className="float" />
+          </div>
+          <p className="eyebrow rise" style={{ animationDelay: '0.1s' }}>
+            Up next
+          </p>
+          <h1 className="rise" style={{ animationDelay: '0.2s' }}>
+            {poll.title}
+          </h1>
+          <p className="waiting rise" style={{ animationDelay: '0.3s' }}>
+            <span className="live-dot" aria-hidden="true" />
+            {note}
+          </p>
         </div>
+        {join && (
+          <div className="rise" style={{ animationDelay: '0.35s' }}>
+            {join}
+          </div>
+        )}
+      </div>
+      <div className="ticker rise" style={{ animationDelay: '0.5s' }} aria-label="Nominees">
+        <p className="eyebrow">
+          {n} {n === 1 ? 'nominee' : 'nominees'}
+        </p>
+        {lines.map((items, i) => (
+          <Marquee key={i} items={items} reverse={i % 2 === 1} big speed={60} />
+        ))}
       </div>
     </div>
   );
@@ -263,7 +369,7 @@ function Nominees({ state }: { state: ShowState }) {
 export function Result({ poll }: { poll: PollView }) {
   const rows = ranked(poll);
   const winners = leadersOf(rows);
-  const revealAt = 0.6 + rows.length * 0.22 + 0.9;
+  const revealAt = 0.6 + rows.length * revealStep(rows.length) + 0.9;
   return (
     <div className="result">
       {winners.length > 0 && <Confetti delay={revealAt + 0.2} />}
@@ -356,6 +462,18 @@ function Crowned({
 
 const ROW = 58;
 
+/**
+ * Set by the Live screen: there is room for two columns of bars, so a long
+ * list (twenty nominees, say) still fits on one screen without scrolling.
+ */
+export const WideScreen = createContext(false);
+const TWO_COLUMNS_FROM = 9;
+
+/** Bars grow one after another; a long list goes quicker, so the whole reveal stays under ~4s. */
+function revealStep(count: number): number {
+  return Math.min(0.22, 3.5 / Math.max(1, count));
+}
+
 export function ranked(poll: PollView) {
   return poll.nominees
     .map((n) => ({ ...n, votes: poll.tally[n.id] ?? 0 }))
@@ -385,21 +503,34 @@ export function Bars({ poll, reveal = false }: { poll: PollView; reveal?: boolea
 
   // Rows keep their DOM order (by id) and only their position changes, so they glide.
   const order = new Map(rows.map((row, index) => [row.id, index]));
+  const wide = useContext(WideScreen);
+  const perColumn =
+    wide && rows.length >= TWO_COLUMNS_FROM ? Math.ceil(rows.length / 2) : rows.length;
   if (!rows.length) return <p className="chart-empty">Nominees appear here once they are added.</p>;
   return (
-    <div className="lbars" role="list" style={{ height: rows.length * ROW }}>
+    <div
+      className={`lbars${perColumn < rows.length ? ' two' : ''}`}
+      role="list"
+      style={{ height: perColumn * ROW }}
+    >
       {poll.nominees.map((nominee) => {
         const index = order.get(nominee.id)!;
         const row = rows[index];
         const lead = leaders.some((l) => l.id === row.id);
         const share = poll.total ? Math.round((row.votes / poll.total) * 100) : 0;
-        const delay = reveal ? 0.6 + (rows.length - 1 - index) * 0.22 : 0;
+        const delay = reveal ? 0.6 + (rows.length - 1 - index) * revealStep(rows.length) : 0;
         return (
           <div
             key={row.id}
             role="listitem"
             className="lrow"
-            style={{ transform: `translateY(${index * ROW}px)`, height: ROW }}
+            style={{
+              transform:
+                index < perColumn
+                  ? `translate(0px, ${index * ROW}px)`
+                  : `translate(calc(100% + var(--col-gap)), ${(index - perColumn) * ROW}px)`,
+              height: ROW,
+            }}
           >
             <div className="bar-label">
               <span className="rank">{String(index + 1).padStart(2, '0')}</span>

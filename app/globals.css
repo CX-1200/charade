@@ -1535,3 +1535,104 @@ body:has(.live) {
     transform: none;
   }
 }
+
+/* ------------------------------------------- live: one screen, no scroll */
+
+body:has(.live.fit) {
+  overflow: hidden;
+}
+.live.fit {
+  min-height: 0;
+  padding-bottom: 0;
+}
+.fit-inner {
+  transform-origin: top center;
+}
+
+/* Twenty-odd nominees: bars in two columns on the big screen. */
+.lbars {
+  --col-gap: 40px;
+}
+.lbars.two .lrow {
+  right: auto;
+  width: calc(50% - var(--col-gap) / 2);
+  grid-template-columns: minmax(0, 56%) 1fr;
+  column-gap: 12px;
+}
+.lbars.two .who {
+  overflow: hidden;
+}
+.lbars.two .who b {
+  display: block;
+}
+/* The big screen uses more of a wide projector than a normal page does. */
+.page.wide.live.fit {
+  max-width: 1640px;
+}
+
+/* Nominee marquees: lines alternate direction; reduced motion lays them out flat. */
+.ticker-track.reverse {
+  animation-direction: reverse;
+}
+.ticker-copy {
+  display: contents;
+}
+.ticker-window + .ticker-window {
+  border-top: 0;
+}
+.ticker-window.big .ticker-item {
+  font-size: clamp(28px, 3vw, 44px);
+  padding: 18px 44px;
+}
+.open-marquee .hero-mini {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.open-marquee h1 {
+  font-size: clamp(34px, 4.6vw, 64px);
+}
+.open-marquee .waiting {
+  justify-content: center;
+}
+.open-marquee .ticker {
+  width: 100%;
+  margin-top: 36px;
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    width: auto;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .ticker-copy {
+    display: none;
+  }
+  .ticker-window {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+/* Keep the scene clear of the corner QR card. */
+.live.fit.has-corner {
+  padding-right: 180px;
+}
+/* "Up next" fills the screen, with its sliding names in the middle. */
+.open-marquee {
+  min-height: calc(100dvh - 150px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.open-head {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24px 56px;
+  flex-wrap: wrap;
+}
+.open-head .join-qr {
+  margin: 0;
+}
