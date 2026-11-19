@@ -182,9 +182,43 @@ export async function withRoom(
   });
 }
 
+/**
+ * The admin's own room code, if they typed one: 4 letters or digits, any case.
+ * Empty means "pick one for me". Throws on anything else.
+ */
+export function customRoomCode(input: unknown): string | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== 'string') throw new HttpError(400, 'A room code is 4 letters or digits');
+  const code = input.trim().toUpperCase();
+  if (!code) return null;
+  if (!isRoomCode(code)) throw new HttpError(400, 'A room code is 4 letters or digits');
+  return code;
+}
+
 /** The host's secret comes back once, here; only its hash is stored. */
-export async function createRoom(hostName: string, hostSecretHash: string): Promise<Room> {
+export async function createRoom(
+  hostName: string,
+  hostSecretHash: string,
+  wantedCode: string | null = null,
+): Promise<Room> {
   const bank = await getBank();
+  if (wantedCode) {
+    // Checked and written under the room's lock, so two admins asking for the
+    // same code at the same moment can't both get it.
+    return withLock(roomKey(wantedCode), async () => {
+      if (await getRoom(wantedCode)) {
+        throw new HttpError(409, `Room ${wantedCode} is already in use — pick another code`);
+      }
+      return saveRoom(
+        makeRoom(
+          wantedCode,
+          hostName,
+          bank.categories.map((c) => c.id),
+          hostSecretHash,
+        ),
+      );
+    });
+  }
   let code = roomCode();
   for (let attempt = 0; attempt < 8 && (await getRoom(code)); attempt += 1) code = roomCode();
   // Never overwrite a live room, however unlikely eight collisions in a row are.

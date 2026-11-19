@@ -13,6 +13,7 @@ export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [newCode, setNewCode] = useState('');
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState('');
 
@@ -36,11 +37,16 @@ export default function HomePage() {
   async function createRoom() {
     setError('');
     if (!name.trim()) return setError('Enter your name first');
+    const wanted = newCode.trim().toUpperCase();
+    if (wanted && !/^[A-Z0-9]{4}$/.test(wanted)) {
+      return setError('A room code is 4 letters or digits — or leave it empty for a random one');
+    }
     setBusy('create');
     try {
       session.setName(name.trim());
       const data = await post<CreateResponse>('/api/rooms', {
         name: name.trim(),
+        code: wanted || undefined,
         adminToken: session.getAdminToken(),
       });
       session.setSeat(data.code, data);
@@ -183,6 +189,29 @@ export default function HomePage() {
 
           <div>
             <h3>Create a room</h3>
+            {admin && (
+              <label className="field" style={{ marginBottom: 10 }}>
+                <span>Room code (optional)</span>
+                <input
+                  type="text"
+                  value={newCode}
+                  placeholder="Random"
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={{ textTransform: 'uppercase', letterSpacing: 4, fontWeight: 700 }}
+                  onChange={(e) =>
+                    setNewCode(
+                      e.target.value
+                        .toUpperCase()
+                        .replace(/[^A-Z0-9]/g, '')
+                        .slice(0, 4),
+                    )
+                  }
+                  onKeyDown={(e) => e.key === 'Enter' && createRoom()}
+                />
+              </label>
+            )}
             <button
               className="btn block"
               onClick={createRoom}
@@ -193,7 +222,7 @@ export default function HomePage() {
             </button>
             <p className="muted" style={{ marginTop: 8 }}>
               {admin
-                ? 'You run the round and can watch instead of playing — the players make the teams.'
+                ? 'Type your own 4-character code (letters or digits, e.g. XMAS) or leave it empty for a random one. You run the round and can watch instead of playing.'
                 : 'Admins only — unlock admin at the top right.'}
             </p>
           </div>

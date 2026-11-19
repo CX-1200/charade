@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
 import { newSecret } from '@/lib/auth';
-import { clean, createRoom, getBank } from '@/lib/game';
+import { clean, createRoom, customRoomCode, getBank } from '@/lib/game';
 import { HttpError } from '@/lib/errors';
 import { fail, readJson } from '@/lib/http';
 import { publicRoom } from '@/lib/serialize';
@@ -15,8 +15,9 @@ export async function POST(request: Request) {
     requireAdmin(body.adminToken);
     const name = clean(body.name, 20);
     if (!name) throw new HttpError(400, 'Please enter your name');
+    const wantedCode = customRoomCode(body.code);
     const { secret, hash } = newSecret();
-    const room = await createRoom(name, hash);
+    const room = await createRoom(name, hash, wantedCode);
     const host = room.players[0];
     const bank = await getBank();
     return NextResponse.json({
