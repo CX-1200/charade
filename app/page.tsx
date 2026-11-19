@@ -17,6 +17,7 @@ import {
   Welcome,
   type PollView,
 } from '@/components/Show';
+import { JoinQr } from '@/components/JoinQr';
 import { TopBar } from '@/components/TopBar';
 import { useLiveState, useRemaining, type ShowState } from '@/components/useLiveState';
 import { post, session, voterHeaders } from '@/lib/client';
@@ -82,7 +83,18 @@ export default function GuestPage() {
     );
   }
 
-  if (!show) return <Holding title={state.title} />;
+  if (!show) {
+    return (
+      <Holding
+        title={state.title}
+        joinId={state.joinId ?? null}
+        onJoin={(id) => {
+          session.setSession(id);
+          void refresh();
+        }}
+      />
+    );
+  }
 
   const stage = show.stage;
   return (
@@ -112,7 +124,15 @@ export default function GuestPage() {
   );
 }
 
-function Holding({ title }: { title: string }) {
+function Holding({
+  title,
+  joinId,
+  onJoin,
+}: {
+  title: string;
+  joinId: string | null;
+  onJoin: (id: string) => void;
+}) {
   return (
     <>
       <TopBar />
@@ -129,9 +149,29 @@ function Holding({ title }: { title: string }) {
             <h1 className="rise" style={{ animationDelay: '0.2s' }}>
               {title}
             </h1>
-            <p className="muted rise" style={{ animationDelay: '0.4s', maxWidth: 360 }}>
-              Voting hasn’t opened yet. When the host starts, scan the QR code they show to join.
-            </p>
+            {joinId ? (
+              <>
+                <div className="rise" style={{ animationDelay: '0.3s' }}>
+                  <JoinQr joinId={joinId} size={200} />
+                </div>
+                <p className="muted rise" style={{ animationDelay: '0.4s', maxWidth: 360 }}>
+                  The vote is open to join. Scan the QR code — or, if you’re reading this on your
+                  phone, just tap below.
+                </p>
+                <button
+                  className="btn accent big rise"
+                  style={{ animationDelay: '0.5s' }}
+                  onClick={() => onJoin(joinId)}
+                >
+                  Join on this phone
+                </button>
+              </>
+            ) : (
+              <p className="muted rise" style={{ animationDelay: '0.4s', maxWidth: 360 }}>
+                Voting hasn’t opened yet. This page opens up by itself when the host starts — no
+                need to refresh.
+              </p>
+            )}
           </div>
         </div>
       </main>

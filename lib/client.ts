@@ -92,3 +92,8 @@ export function adminHeaders(): Record<string, string> {
 
 /** "ABCD2345" → "ABCD-2345", easier to read off a printed pass. */
 export const formatCode = (code: string) => `${code.slice(0, 4)}-${code.slice(4)}`;
+
+/** The address the join QR code opens: this site, with the open session's id. */
+export function joinLink(sessionId: string): string {
+  return `${window.location.origin}/?s=${encodeURIComponent(sessionId)}`;
+}

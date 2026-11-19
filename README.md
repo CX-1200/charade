@@ -4,18 +4,20 @@ Live voting for **Best Dress — King** and **Best Dress — Queen**, run as a s
 
 ## Who sees what
 
-- **The site is off until the admin opens a session.** Anyone who opens it before then — or later without the session's QR code — sees a holding page with the event's name and nothing to tap. They are "uninvited": the server gives them no state, no device id, and refuses their votes.
+- **The site is off until the admin opens a session.** Anyone who opens it before then sees a holding page with the event's name and nothing to tap. They are "uninvited": the server gives them no state, no device id, and refuses their votes. Once a session is open, the holding page shows the join QR code (and a "Join on this phone" button), and updates by itself — no refresh needed.
 - **Guests** join by scanning the QR code the admin shows (it carries the session id). Their one page (`/`) follows the show; there are no tabs.
 - **The admin** unlocks with the faint lock at the far right of the top bar. The admin view has two tabs:
-  - **Live** (`/live`) — for the projector. No controls and no QR code; it shows each step, including the countdown.
+  - **Live** (`/live`) — for the projector. No controls; it shows each step, including the countdown, and — while the site is on — the join QR code in a corner card (larger on the welcome screen, hidden for the finale).
   - **Manage** (`/manage`) — the session and its join QR (with a full-screen QR to project), **The show**, the nominee lists, **Reset votes** per vote, voting rules and passes.
 
 Hiding tabs is a courtesy, not the protection: every admin request needs a password-issued token, and every vote needs the current session id.
 
 ## Running the show
 
+The admin can be signed in on several devices at once (say, a laptop on the projector and a phone in hand): every screen reads the same server state, so they stay in step. Each step button tells the server which step it was pressed from; if another device has already moved the show on, the press is refused and the screen catches up instead of undoing it. Opening a session that is already open keeps the same QR code.
+
 1. Unlock, paste the nominees for King and Queen (one per line, optional note after `|`), and pick the voting rules.
-2. **Open session** → a QR code appears. Show it (full screen on the projector, or on your phone); guests scan to join. **Turn off** ends the session and sends everyone back to the holding page; a new session gets a new QR code.
+2. **Open session** → a QR code appears. Show it (full screen on the projector, or on your phone); guests scan to join. The same QR code is on the Live screen and the holding page. **Turn off** ends the session and sends everyone back to the holding page; a new session gets a new QR code.
 3. Put **Live** on the projector, then press the button in **The show** for each step:
 
 | Admin presses | Guests' phones | Live screen |

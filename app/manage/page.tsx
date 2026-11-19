@@ -8,7 +8,7 @@ import { useConfirm } from '@/components/ConfirmDialog';
 import { Qr } from '@/components/Qr';
 import { TopBar } from '@/components/TopBar';
 import { useRemaining } from '@/components/useLiveState';
-import { adminHeaders, api, post, session } from '@/lib/client';
+import { adminHeaders, api, joinLink, post, session } from '@/lib/client';
 import { STAGES, type PollId, type Stage, type VoteMode } from '@/lib/types';
 import type { AdminView } from '@/lib/view';
 
@@ -48,22 +48,27 @@ export default function ManagePage() {
     return () => clearInterval(timer);
   }, [admin, load]);
 
-  const act = useCallback(async (body: Record<string, unknown>) => {
-    setBusy(true);
-    setError('');
-    try {
-      const data = await post<Response>('/api/admin/election', body, adminHeaders());
-      setView(data);
-      setNote(data.message ?? '');
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      setNote('');
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const act = useCallback(
+    async (body: Record<string, unknown>) => {
+      setBusy(true);
+      setError('');
+      try {
+        const data = await post<Response>('/api/admin/election', body, adminHeaders());
+        setView(data);
+        setNote(data.message ?? '');
+        return true;
+      } catch (e) {
+        setError((e as Error).message);
+        setNote('');
+        // Often another admin device got there first: catch up with it at once.
+        void load();
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load],
+  );
 
   const signOut = (
     <button
@@ -484,10 +489,10 @@ function RulesSection({ view, busy, act }: { view: AdminView; busy: boolean; act
 /** Turns the site on and off, and shows the QR code guests scan to join. */
 function SessionSection({ view, busy, act }: { view: AdminView; busy: boolean; act: Act }) {
   const confirm = useConfirm();
-  const [origin, setOrigin] = useState('');
+  const [link, setLink] = useState('');
   const [big, setBig] = useState(false);
-  useEffect(() => setOrigin(window.location.origin), []);
-  const link = view.session && origin ? `${origin}/?s=${view.session.id}` : '';
+  const sessionId = view.session?.id;
+  useEffect(() => setLink(sessionId ? joinLink(sessionId) : ''), [sessionId]);
 
   const end = async () => {
     const ok = await confirm({
@@ -528,8 +533,8 @@ function SessionSection({ view, busy, act }: { view: AdminView; busy: boolean; a
           {link && <Qr value={link} size={200} label="QR code for guests to join" />}
           <div>
             <p style={{ margin: 0 }}>
-              Show this QR code (on the projector or on your phone). Only guests who scan it can
-              vote; anyone who opened the site before — or without it — just sees a holding page.
+              Guests scan this QR code to join. It is also on the Live screen and on the page anyone
+              sees when they open the site, so you don’t have to hold it up yourself.
             </p>
             <div className="row" style={{ marginTop: 14 }}>
               <button className="btn primary" onClick={() => setBig(true)}>
@@ -638,7 +643,7 @@ function ShowSection({ view, busy, act }: { view: AdminView; busy: boolean; act:
     ) {
       return;
     }
-    await act({ action: 'setStage', stage: step.stage, countdown });
+    await act({ action: 'setStage', stage: step.stage, from: view.stage, countdown });
   };
   const back = async (step: Step) => {
     const ok = await confirm({
@@ -646,7 +651,7 @@ function ShowSection({ view, busy, act }: { view: AdminView; busy: boolean; act:
       message: `Every screen goes back to “${step.title}”. Votes already cast are kept.`,
       confirmLabel: 'Go back',
     });
-    if (ok) await act({ action: 'setStage', stage: step.stage });
+    if (ok) await act({ action: 'setStage', stage: step.stage, from: view.stage });
   };
 
   return (

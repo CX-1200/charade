@@ -72,10 +72,20 @@ function apply(election: Election, body: Record<string, unknown>): string | null
     }
     case 'setStage': {
       if (!isStage(body.stage)) throw new HttpError(400, 'Unknown step');
+      // Two admin devices can run the show. A press made from a screen that
+      // had not caught up yet must not undo the other device's step.
+      if (isStage(body.from) && body.from !== (election.stage ?? 'welcome')) {
+        throw new HttpError(
+          409,
+          'Another admin device has already moved the show on — check the steps and try again',
+        );
+      }
       goToStage(election, body.stage, body.countdown);
       return null;
     }
     case 'openSession': {
+      // Already on (another admin device opened it): keep the same QR code.
+      if (election.session) return 'The site is already on';
       openSession(election);
       return 'The site is on — guests can scan the QR code to join';
     }

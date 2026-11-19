@@ -13,14 +13,16 @@ import {
   WATERMARK,
   Welcome,
 } from '@/components/Show';
+import { JoinQr } from '@/components/JoinQr';
 import { TopBar } from '@/components/TopBar';
 import { useLiveState, type ShowState } from '@/components/useLiveState';
 import type { PollId, Stage } from '@/lib/types';
 
 /**
- * The big screen, for the admin to put on the projector. It has no controls
- * and no QR code: the admin runs the show from Manage (where the join QR
- * lives) and this follows, countdown included.
+ * The big screen, for the admin to put on the projector. It has no controls:
+ * the admin runs the show from Manage and this follows, countdown included.
+ * While the site is on it shows the join QR code — in a corner card,
+ * larger on the welcome screen, so late arrivals can still get in.
  */
 export default function LivePage() {
   const [admin] = useAdmin();
@@ -49,6 +51,9 @@ export default function LivePage() {
           <div className={`scene${leaving ? ' out' : ''}`} key={shown}>
             <Scene stage={shown} state={show} skew={skew} />
           </div>
+        )}
+        {show?.joinId && shown && shown !== 'finale' && (
+          <JoinQr joinId={show.joinId} size={shown === 'welcome' ? 190 : 120} corner />
         )}
       </main>
     </>

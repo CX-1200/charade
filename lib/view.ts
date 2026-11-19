@@ -36,11 +36,17 @@ export function publicView(election: Election, voterKey: string | null) {
 }
 
 /**
- * Everyone outside the session — before the admin opens one, or without its
- * QR code — gets only this: the event's name and nothing to act on.
+ * Everyone outside the session gets only this: the event's name and nothing to
+ * act on. Before the admin opens a session that is all; once the site is on,
+ * it also carries the join id, so the holding page can show the join QR code.
  */
 export function guestView(election: Election) {
-  return { now: Date.now(), invited: false as const, title: election.title };
+  return {
+    now: Date.now(),
+    invited: false as const,
+    title: election.title,
+    joinId: election.session?.id ?? null,
+  };
 }
 
 /** The admin's view adds the session (for its QR code) and the voting passes. */

@@ -5,7 +5,12 @@ import { adminHeaders, api, session, voterHeaders } from '@/lib/client';
 import type { GuestView, PublicView } from '@/lib/view';
 
 /** The show, as the admin or a guest in the session sees it. */
-export type ShowState = PublicView & { pass: 'none' | 'valid' | 'invalid'; device: string | null };
+export type ShowState = PublicView & {
+  pass: 'none' | 'valid' | 'invalid';
+  device: string | null;
+  /** Only on the admin's screens: the open session, for the join QR code. */
+  joinId?: string | null;
+};
 export type StateResponse = ShowState | GuestView;
 
 /**

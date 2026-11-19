@@ -22,7 +22,13 @@ export async function GET(request: NextRequest) {
   try {
     const election = await readElection();
     if (isAdmin(request.headers.get('x-admin-token'))) {
-      return NextResponse.json({ ...publicView(election, null), pass: 'none', device: null });
+      return NextResponse.json({
+        ...publicView(election, null),
+        pass: 'none',
+        device: null,
+        // For the join QR code on the Live screen.
+        joinId: election.session?.id ?? null,
+      });
     }
     if (!inSession(election, request.headers.get('x-session'))) {
       return NextResponse.json(guestView(election));
